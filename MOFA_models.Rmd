@@ -1,0 +1,625 @@
+---
+title: "Untitled"
+author: "Reuben"
+date: "2024-12-04"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+#packages
+```{r}
+library(data.table)
+library(plotly)
+library(MOFA2)
+library(ggplot2)
+library(dplyr)
+library(reshape2)
+library(tidyverse)
+library(RColorBrewer)
+```
+
+# Load metdata
+```{r}
+patient_data <- read.delim("ws3_grampian_patient_data.txt")
+patient_data <- patient_data[-c(1, 2), ]
+
+# Where are all of the cancers located?
+unique(patient_data$Location.of.Tumour) # all rectal cancers
+```
+
+# barplots of treatment and treatment response distribution
+```{r}
+
+ggplot(patient_data, mapping = aes(x = Response.to.Treatment,fill = Response.to.Treatment)) +
+  geom_bar(color = "black")+
+  geom_text(stat='count', aes(label=..count..), vjust=-1)+
+  scale_y_continuous(limits=c(0, 120))+
+  ggtitle("Distribution of Response to Treatment")
+
+
+ggplot(patient_data, mapping = aes(x = Treatment.Arm,fill = Treatment.Arm)) +
+  geom_bar(color = "black")+
+  geom_text(stat='count', aes(label=..count..), vjust=-1)+
+  scale_y_continuous(limits=c(0, 150))+
+  ggtitle("Distribution of Treatment Type")
+```
+
+# Load preprocessed datasets
+```{r}
+rna <- readRDS("rna_unsupervised_preprocessed")
+methylation <- readRDS("methylation_unsupervised_preprocessed")
+cna <- readRDS("cna_unsupervised_preprocessed")
+mutation<- readRDS("mutation_unsupervised_preprocessed")
+```
+######################################################################################
+# MOFA 
+# Make sure all samples are in the same order for all the datasets to put into mofa
+```{r}
+add_missing_colnames <- function(df, df2) {
+  
+  #get column names of df and df2
+  df2_colnames <- colnames(df2)
+  df_colnames <- colnames(df)
+  
+  #find missing column names in df
+  missing_colnames <- setdiff(df2_colnames, df_colnames)
+  
+  #add missing column names to df
+  if (length(missing_colnames) > 0) {
+    df[, missing_colnames] <- NA
+  }# Fill missing samples with NAs as MOFA can handle NA values
+  
+  #return the modified df
+  return(df)
+}
+
+cna <- add_missing_colnames(cna,rna)
+mutation <- add_missing_colnames(mutation,rna)
+methylation <- add_missing_colnames(methylation,rna)
+methylation <- add_missing_colnames(methylation,cna)
+mutation <- add_missing_colnames(mutation,cna)
+rna <- add_missing_colnames(rna,cna)
+```
+
+
+# Get all dataset samples in the same order
+```{r}
+#make mutation data numeric
+row_names <- rownames(mutation)
+# Convert all values to numeric while keeping it as a data frame
+mutation <- as.data.frame(lapply(mutation, as.numeric))
+# Reassign preserved row names
+rownames(mutation) <- row_names
+
+#order samples
+cna <- cna[, order(colnames(cna))]
+rna <- rna[, order(colnames(rna))]
+mutation <- mutation[, order(colnames(mutation))]
+methylation <- methylation[, order(colnames(methylation))]
+```
+
+#make mofa object
+```{r}
+#extract numeric data from dataframes as matrices
+rna_mat <- as.matrix(rna)
+cna_mat <- as.matrix(cna)
+mut_mat <- as.matrix(mutation)
+meth_mat <- as.matrix(methylation)
+
+#create a list of matrices
+dt <- list(RNA = rna_mat, CNA = cna_mat, Mutation = mut_mat, Methylation = meth_mat)
+
+#verify the dimensions of the resulting list
+lapply(dt, dim)
+
+#create MOFA object
+MOFAobject <- create_mofa(dt)
+
+ModelOptions <- get_default_model_options(MOFAobject)
+
+# Plot overview of the data
+plot_data_overview(MOFAobject)
+
+dim(mut_mat)
+```
+
+#make multiple MOFA models with varying numbers of factors - warning takes a long time to run chunk
+```{r}
+#function to train MOFA model with varying number of factors
+train_mofa_with_factors <- function(MOFAobject, n_factors_list) {
+  
+  #loop through the number of factors in the list
+  for (n_factors in n_factors_list) {
+    
+    #data options
+    data_opts <- get_default_data_options(MOFAobject)
+    data_opts$scale_views <- TRUE
+    
+    #get default model options
+    model_opts <- get_default_model_options(MOFAobject)
+    
+    #change the number of factors
+    model_opts$num_factors <- n_factors
+    
+    # Model everything as gaussian except mutation, which is modelled as bernoulli
+    model_opts$likelihoods <- c("gaussian", "gaussian", "bernoulli", "gaussian")
+    
+    #train options
+    train_opts <- get_default_training_options(MOFAobject)
+    train_opts$convergence_mode <- "slow"
+    train_opts$seed <- 42
+    train_opts$maxiter <- 3000
+    
+    #prepare MOFA object with modified options
+    MOFAobject_mod <- prepare_mofa(
+      object = MOFAobject,
+      data_options = data_opts,
+      model_options = model_opts,
+      training_options = train_opts
+    )
+    
+    #define the file path to the trained model
+    outfile <- file.path(getwd(), paste0("MOFA_model_", n_factors, ".hdf5"))
+    print(outfile)
+    
+    # Train the MOFA model - when trained it will save the model object in the outputfile.
+    MOFAobject_trained <- run_mofa(MOFAobject_mod, outfile, use_basilisk = TRUE)
+  }
+}
+
+n_factors_list <- c(5,10,15,20,25,30,35,40,45,50)# list of factors to loop through
+# This will make 10 MOFA models with varying numbers of factors
+train_mofa_with_factors(MOFAobject, n_factors_list)
+```
+
+#compare models - must run previous chunk to work, else skip this step and follow the chunks that only require model_15
+```{r}
+# Load the models
+outfile <- file.path(getwd(), paste0("MOFA_model_5.hdf5"))
+model_5 <- load_model(outfile)
+outfile <- file.path(getwd(), paste0("MOFA_model_10.hdf5"))
+model_10 <- load_model(outfile)
+outfile <- file.path(getwd(), paste0("MOFA_model_15.hdf5"))
+model_15 <- load_model(outfile)
+outfile <- file.path(getwd(), paste0("MOFA_model_20.hdf5"))
+model_20 <- load_model(outfile)
+outfile <- file.path(getwd(), paste0("MOFA_model_25.hdf5"))
+model_25 <- load_model(outfile)
+outfile <- file.path(getwd(), paste0("MOFA_model_30.hdf5"))
+model_30 <- load_model(outfile)
+outfile <- file.path(getwd(), paste0("MOFA_model_35.hdf5"))
+model_35 <- load_model(outfile)
+outfile <- file.path(getwd(), paste0("MOFA_model_40.hdf5"))
+model_40 <- load_model(outfile)
+outfile <- file.path(getwd(), paste0("MOFA_model_45.hdf5"))
+model_45 <- load_model(outfile)
+outfile <- file.path(getwd(), paste0("MOFA_model_50.hdf5"))
+model_50 <- load_model(outfile)
+
+#get varaince explained for each model
+variance_5 <- setNames(as.data.frame(model_5@cache$variance_explained[1]), "5 Factors")
+variance_10 <- setNames(as.data.frame(model_10@cache$variance_explained[1]), "10 Factors")
+variance_15 <- setNames(as.data.frame(model_15@cache$variance_explained[1]), "15 Factors")
+variance_20 <- setNames(as.data.frame(model_20@cache$variance_explained[1]), "20 Factors")
+variance_25 <- setNames(as.data.frame(model_25@cache$variance_explained[1]), "25 Factors")
+variance_30 <- setNames(as.data.frame(model_30@cache$variance_explained[1]), "30 Factors")
+variance_35 <- setNames(as.data.frame(model_35@cache$variance_explained[1]), "35 Factors")
+variance_40 <- setNames(as.data.frame(model_40@cache$variance_explained[1]), "40 Factors")
+variance_45 <- setNames(as.data.frame(model_45@cache$variance_explained[1]), "45 Factors")
+variance_50 <- setNames(as.data.frame(model_50@cache$variance_explained[1]), "50 Factors")
+
+#combine into one df
+variance_df <- cbind(variance_5,variance_10,variance_15,variance_20,variance_25,variance_30,variance_35,variance_40,variance_45,variance_50)
+variance_df <- rbind(variance_df, Number_of_Factors=c(5,10,15,20,25,30,35,40,45,50))
+variance_df <- as.data.frame(t(variance_df))
+#plot line graph
+ggplot(data = variance_df, aes(x = Number_of_Factors)) +
+  geom_line(aes(y = RNA, color = "RNA"), linetype = "dotted") +
+  geom_point(aes(y = RNA, color = "RNA")) +
+  geom_line(aes(y = CNA, color = "CNA"), linetype = "dotted") +
+  geom_point(aes(y = CNA, color = "CNA")) +
+  geom_line(aes(y = Mutation, color = "Mutation"), linetype = "dotted") +
+  geom_point(aes(y = Mutation, color = "Mutation")) +
+  geom_line(aes(y = Methylation, color = "Methylation"), linetype = "dotted") +
+  geom_point(aes(y = Methylation, color = "Methylation")) +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  labs(x = "Number of Factors", y = "Variance Explained", title = "Variance Explained per View", color = "Type") +
+  scale_color_manual(values = brewer.pal(n = 4, name = "Set1"))
+
+variance_df <- variance_df %>%
+  mutate(Total_Variance = RNA + CNA + Mutation + Methylation)
+
+#plotting the total variance
+ggplot(data = variance_df, aes(x = Number_of_Factors)) +
+  geom_line(aes(y = Total_Variance, color = "Total Variance"), size = 1) +
+  theme_minimal() +
+  labs(x = "Number of Factors", y = "Total Variance Explained", 
+       title = "Total Variance Explained by Number of Factors", color = "Type") +
+  scale_color_manual(values = c("Total Variance" = "black")) +
+  theme(legend.position = "bottom")
+#plot elbo scores
+compare_elbo(list(model_5,model_10,model_15,model_20,model_25,model_30,model_35,model_40,model_45,model_50), log = FALSE)
+```
+
+#construct custom elbo plot
+```{r}
+#function to plot elbo scores of each model
+get_all_elbo <- function(model_names,n_factors){
+  
+  elbo_df <- data.frame(model = n_factors)
+  elbo_list <- c()
+  
+  for (model in model_names){
+
+    elbo <- get_elbo(model)
+    elbo_list <- c(elbo_list,elbo)
+  }
+  elbo_df$elbo_score <- elbo_list
+  return(elbo_df)
+}
+
+elbo_df <- get_all_elbo(c(model_5,model_10,model_15,model_20,model_25,model_30,model_35,model_40,model_45,model_50),c(50))
+
+#plot elbo scores
+ggplot(data = elbo_df, aes(x = model, y = elbo_score)) +
+  geom_line(size = 1, colour = "red") +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  labs(x = "Number of Factors", y = "ELBO Score", title = "Evidence Lower Bound per Facor")
+
+```
+
+# select optimal model as the one with 15 factors
+# This model was the one with the highest elbo score that met teh criteria of 
+# explaining >1% variance for at least one omics in each factor
+
+
+# Check the variance of each omics at within each factor
+```{r}
+# load model 15 - optimal model
+outfile <- file.path(getwd(), paste0("MOFA_model_15.hdf5"))
+model_15 <- load_model(outfile)
+
+get_variance_explained(model_15)
+```
+
+# add metadata to model 15
+```{r}
+#subset metdata to only include samples that match the matricies input into MOFA
+patient_data <- patient_data[patient_data$X.Patient.ID %in% colnames(cna),]
+#is the order of data matrices the same as the patient data?
+patient_data$X.Patient.ID == colnames(cna)
+
+#extract metadata from patient data
+treatment_arm <- patient_data$Treatment.Arm
+response_to_treatment <- patient_data$Response.to.Treatment
+gender <- patient_data$Gender
+os_months <- as.numeric(patient_data$OS.in.Months)
+os_status <- patient_data$OS.Status
+dfs_status <- patient_data$DFS.Status
+dfs_months <- patient_data$DFS.in.Months
+age <-  patient_data$Age
+Pretreatment_Tumour_state <-patient_data$Pretreatment.T.Stage
+Pretreatment_Node_state <- patient_data$Pretreatment.N.Stage
+Pretreatment_Metastasis_state <- patient_data$Pretreatment.M.Stage
+Post_Treatment_Tumour_Stage <- patient_data$Post.Treatment.T.Stage
+Post_Treatment_Node_Stage <- patient_data$Post.Treatment.N.Stage
+Post_Treatment_TNM_Staging <- patient_data$Post.Treatment.TNM.Staging
+Post_Treatment_Dukes <- patient_data$Post.Treatment.Dukes
+Bowel_Screen_Detected <- patient_data$Bowel.Screen.Detected
+Tumour_Differentiation <- patient_data$Tumour.Differentiation
+Number_of_involved_Lymph_Nodes <- patient_data$Number.of.involved.Lymph.Nodes
+Nsamples <- sum(model_15@dimensions$N)
+# add metadata to df
+sample_metadata <- data.frame(
+  sample = samples_names(model_15)[[1]],
+  Pretreatment_Tumour_state = Pretreatment_Tumour_state,
+  Pretreatment_Node_state = Pretreatment_Node_state,
+  Pretreatment_Metastasis_state = Pretreatment_Metastasis_state,
+  EMVI = patient_data$EMVI,
+  CRM = patient_data$CRM,
+  TME_Quality = patient_data$TME.Quality,
+  Post_Treatment_Tumour_Stage = Post_Treatment_Tumour_Stage,
+  Post_Treatment_Node_Stage = Post_Treatment_Node_Stage,
+  Post_Treatment_TNM_Staging = Post_Treatment_TNM_Staging,
+  Post_Treatment_Dukes = Post_Treatment_Dukes,
+  Bowel_Screen_Detected  = Bowel_Screen_Detected,
+  Gender = gender,
+  Overall_Survival_Status = os_status,
+  Overall_Survival_Months = os_months,
+  Disease_Free_Status = dfs_status,
+  Disease_Free_Months = dfs_months,
+  Tumour_Differentiation = Tumour_Differentiation,
+  Age = age,
+  Treatment_type = treatment_arm,
+  Response = response_to_treatment
+)
+#add to model
+samples_metadata(model_15) <- sample_metadata
+head(model_15@samples_metadata, n=3)
+
+```
+
+#visualise variance + correlation of factors
+```{r}
+#check factor correlation for redundancy
+plot_factor_cor(model_15)
+#get variance explained
+plot_variance_explained(model_15 , x = "view", y = "factor", plot_total = TRUE)
+#get total variance explained per omic as an integer
+model_15@cache$variance_explained$r2_total[[1]]
+
+variance_df <- model_15@cache$variance_explained$r2_per_factor
+# write variance explained to csv for supplementary information
+write.csv(variance_df,file='variance_explained.csv', row.names=TRUE)
+```
+
+#characterise factors - what factors correlate to covarites in the metadata
+```{r}
+# plot a heatmap of the correlation between factors and covariates from the metadata
+# Plot the log pvalue
+correlate_factors_with_covariates(model_15, 
+  covariates = c(
+  "Pretreatment_Tumour_state", 
+  "Pretreatment_Node_state", 
+  "Pretreatment_Metastasis_state",
+ "EMVI",
+  "CRM",
+  "TME_Quality",
+  "Post_Treatment_Tumour_Stage",
+  "Post_Treatment_Node_Stage" ,
+  "Post_Treatment_TNM_Staging",
+  "Post_Treatment_Dukes" ,
+  "Bowel_Screen_Detected" , 
+  "Gender" ,
+  "Overall_Survival_Status", 
+  "Overall_Survival_Months" ,
+  "Disease_Free_Status" ,
+  "Disease_Free_Months" ,
+  "Tumour_Differentiation",
+  "Age",
+  "Treatment_type", 
+  "Response" ), 
+  abs = TRUE,
+  plot="log_pval"
+)
+# Extract in a df the exact correlation values
+correlated_covariates <- correlate_factors_with_covariates(model_15, 
+  covariates = c(
+  "Pretreatment_Tumour_state", 
+  "Pretreatment_Node_state", 
+  "Pretreatment_Metastasis_state",
+ "EMVI",
+  "CRM",
+  "TME_Quality",
+  "Post_Treatment_Tumour_Stage",
+  "Post_Treatment_Node_Stage" ,
+  "Post_Treatment_TNM_Staging",
+  "Post_Treatment_Dukes" ,
+  "Bowel_Screen_Detected" , 
+  "Gender" ,
+  "Overall_Survival_Status", 
+  "Overall_Survival_Months" ,
+  "Disease_Free_Status" ,
+  "Disease_Free_Months" ,
+  "Tumour_Differentiation",
+  "Age",
+  "Treatment_type", 
+  "Response" ), 
+  abs = TRUE,
+  plot="r", return_data = TRUE
+)
+#save as csv for supplementary information
+write.csv(correlated_covariates, file = "correlated_covariates.csv", row.names = TRUE)
+
+# Plot fewer Covariates for better view
+correlate_factors_with_covariates(model_15, 
+  covariates = c("Gender","Response" ,"Overall_Survival_Status","Treatment_type", "Disease_Free_Status", "Age"), 
+  abs = TRUE,
+  plot="log_pval"
+)
+
+
+
+```
+
+# boxplots of samples in each factor correlated to response
+```{r}
+plot_factor(model_15, 
+  factor = c(2,4,5,12), 
+  color_by = "Response", 
+  dot_size = 3,
+  dodge = TRUE,
+  stroke = 0.5,
+  add_violin = T,
+  add_boxplot = T
+) 
+  
+```
+
+####################################################################
+# statistical test
+```{r}
+# get factor values from each  factor strongly correlated to response to treatment 
+factor_2 <- get_factors(model_15, factors = 2, as.data.frame = T)
+factor_4 <- get_factors(model_15, factors = 4, as.data.frame = T)
+factor_5 <- get_factors(model_15, factors = 5, as.data.frame = T)
+factor_12 <- get_factors(model_15, factors = 12, as.data.frame = T)
+
+metadata <- model_15@samples_metadata
+
+# Perform anova between response categories
+# ANOVA
+factor_2$Response <- metadata$Response
+factor_4$Response <- metadata$Response
+factor_5$Response <- metadata$Response
+factor_12$Response <- metadata$Response
+factor_2$value <- as.numeric(factor_2$value)
+factor_4$value <- as.numeric(factor_4$value)
+factor_5$value <- as.numeric(factor_5$value)
+factor_12$value <- as.numeric(factor_12$value)
+# Fit ANOVA model
+anova_factor_2 <- aov(value ~ Response, data = factor_2)
+
+anova_factor_4 <- aov(value ~ Response, data = factor_4)
+
+anova_factor_5 <- aov(value ~ Response, data = factor_5)
+
+anova_factor_12 <- aov(value ~ Response, data = factor_12)
+
+# Extract ANOVA summaries
+summary_factor_2 <- summary(anova_factor_2)[[1]]
+summary_factor_4 <- summary(anova_factor_4)[[1]]
+summary_factor_5 <- summary(anova_factor_5)[[1]]
+summary_factor_12 <- summary(anova_factor_12)[[1]]
+
+# Combine results into a data frame
+anova_results <- data.frame(
+  Factor = c(2, 4, 5, 12),
+  "Degrees of Freedom" = c(summary_factor_2[1, "Df"], summary_factor_4[1, "Df"], summary_factor_5[1, "Df"], summary_factor_12[1, "Df"]),
+  "Sum of Squares" = c(summary_factor_2[1, "Sum Sq"], summary_factor_4[1, "Sum Sq"], summary_factor_5[1, "Sum Sq"], summary_factor_12[1, "Sum Sq"]),
+  "Mean Squares" = c(summary_factor_2[1, "Mean Sq"], summary_factor_4[1, "Mean Sq"], summary_factor_5[1, "Mean Sq"], summary_factor_12[1, "Mean Sq"]),
+  "F-value" = c(summary_factor_2[1, "F value"], summary_factor_4[1, "F value"], summary_factor_5[1, "F value"], summary_factor_12[1, "F value"]),
+  "P-value" = c(summary_factor_2[1, "Pr(>F)"], summary_factor_4[1, "Pr(>F)"], summary_factor_5[1, "Pr(>F)"], summary_factor_12[1, "Pr(>F)"])
+)
+print(anova_results)
+
+#save as csv for supplementary information
+write.csv(anova_results,file = "ANOVA_results.csv", row.names = FALSE)
+
+```
+
+
+# various visualisations of the important factors
+
+#heatmaps of the top loaded features in the factors that correlated to response for each omic
+```{r}
+heatmap_function <- function(model, n_features, view, covariate, factor){
+  for (omics in view){
+    plot_data_heatmap(model, 
+    factor = factor, 
+    view = omics, 
+    features = n_features,
+    denoise = FALSE,
+    cluster_rows = T, cluster_cols = T,
+    show_colnames = F, show_rownames = T,
+    annotation_samples = covariate,
+    annotation_legend = T, 
+    scale = "row"
+  )
+  }
+}
+# make a heatmap for each factor correlated strongly with the response covariate 
+heatmap_function(model_15,30,c("RNA"),"Response", 2)
+heatmap_function(model_15,30,c("RNA"),"Response", 4)
+heatmap_function(model_15,30,c("RNA"),"Response", 5)
+heatmap_function(model_15,30,c("RNA"),"Response", 12)
+```
+
+#plot samples in latent factor space labelled with response type
+#for all the factors correlated to response
+```{r}
+p <- plot_factors(model_15, 
+  factors = c(2,4,5,12), 
+  color_by = "Response",
+  dot_size = 1.4,
+  show_missing = T
+)
+print(p)
+
+```
+
+# plot in 2D factor space
+```{r}
+p <- plot_factors(model_15, 
+  factors = c(2,4), 
+  color_by = "Response", 
+  dot_size = 3
+) 
+p + 
+  stat_ellipse(aes(color=color_by), geom = "polygon", alpha=0.2)
+
+p <- plot_factors(model_15, 
+  factors = c(2,5), 
+  color_by = "Response", 
+  dot_size = 3
+) 
+p + 
+  stat_ellipse(aes(color=color_by), geom = "polygon", alpha=0.2)
+
+p <- plot_factors(model_15, 
+  factors = c(2,12), 
+  color_by = "Response", 
+  dot_size = 3
+) 
+p + 
+  stat_ellipse(aes(color=color_by), geom = "polygon", alpha=0.2)
+```
+
+# Plot the samples in 3D factor space
+```{r}
+library(plotly)
+
+factors <- get_factors(model_15, as.data.frame = TRUE)
+
+# Extract the first three factors
+factor2 <- factors$factor=="Factor2"
+factor2 <- factors[factor2,]
+factor2 <- factor2$value
+
+factor4 <- factors$factor=="Factor4"
+factor4 <- factors[factor4,]
+factor4 <- factor4$value
+
+factor5 <- factors$factor=="Factor5"
+factor5 <- factors[factor5,]
+factor5 <- factor5$value
+
+# Create a data frame with the first three factors
+#add condition to df
+condition <- sample_metadata$Response
+factor_data <- data.frame(Factor2 = factor2, Factor4 = factor4, Factor5 = factor5, condition = condition)
+
+
+
+# Create a 3D plot using plotly
+fig <- plot_ly(factor_data, x = ~Factor2, y = ~Factor4, z = ~Factor5, color = ~condition, type = 'scatter3d', mode = 'markers', marker = list(size = 6)) %>%  # Adjust the size value as needed %>%
+  layout(
+    title = "3D Plot of Factors",
+    scene = list(
+      xaxis = list(title = 'Factor 2'),
+      yaxis = list(title = 'Factor 4'),
+      zaxis = list(title = 'Factor 5')
+    )
+  )
+
+# Display the plot
+fig
+
+```
+
+#show important features from the most important factor related to reponse
+```{r}
+top_weighted_features <- function(model,view,factor_list,nfeatures){
+   # loop through all features
+  for (factor in factor_list){ 
+    #plot the top weighted features
+      plot <- plot_top_weights(model,
+            view = view,
+            factor = factor,
+            nfeatures = nfeatures, scale = FALSE
+          )
+      print(plot)
+  }
+}
+# plot feature weights for important factors for all omics
+top_weighted_features(model_15, "RNA", c(2,4,5,12), 50)
+top_weighted_features(model_15, "CNA", c(2,4,5,12), 50)
+top_weighted_features(model_15, "Methylation", c(2,4,5,12), 50)
+top_weighted_features(model_15, "Mutation", c(2,4,5,12), 50)
+
+```
+#####################################################################################

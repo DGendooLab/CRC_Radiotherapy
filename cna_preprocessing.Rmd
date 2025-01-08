@@ -1,0 +1,159 @@
+---
+title: "CNA_preprocessing"
+output: html_document
+date: "2024-06-27"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+#clear environment
+```{r}
+rm(list = ls())
+```
+
+
+#packages
+```{r}
+library(ggplot2)
+library(reshape2)
+library(preprocessCore)
+library(tidyverse)
+library(clusterProfiler)
+```
+
+# Handle CNA segmentation data format
+```{r}
+# Load CNA data
+cna <- read.delim("")# add directory to cna data - data used here is from S-CORT
+# Load metdata
+patient_data <- read.delim("ws3_grampian_patient_data.txt")
+
+# Extract samples from cna seg data that match patient data
+colnames(cna) <- substr(colnames(cna), 1,8)
+rownames(cna) <- cna[,1]
+cna <- cna[,colnames(cna) %in% patient_data$X.Patient.ID]
+
+# Convert CNA ENTREZID to symbol
+genes <- rownames(cna)
+genes_names <- bitr(genes, fromType = "ENTREZID", toType = "SYMBOL", OrgDb = "org.Hs.eg.db")
+rownames(cna) <- genes_names$SYMBOL
+```
+
+# Filter out sparsity - each feature must contain values other than na or 0 for at least 5% of samples
+```{r}
+dim(cna_filtered)
+# Calculate 5% of the number of samples.
+num_samples <- length(colnames(cna))
+sample_threshold <- round(num_samples/20)
+
+# Filter CNA based on a threshold - 5% here
+cna_filtered <- NULL
+for (row in 1:nrow(cna)){
+  count <- 0 # reset count for each row
+  for (col in 1:ncol(cna)){
+    # Count the number of 2, -2, 1 and -1 values 
+    if (!is.na(cna[row,col]) && (cna[row,col] == 2 || cna[row,col] == -2 || cna[row,col] == -1 || cna[row,col] == 1)){
+      count <- count + 1
+    }
+  }
+  if (count >= sample_threshold){
+    cna_filtered <- rbind(cna_filtered, cna[row,])
+  }
+}
+dim(cna_filtered)
+```
+
+# View the distribution
+```{r}
+# Plot distribution before binarize
+subset <- cna_filtered[1:10,]
+# Convert the transposed df to a long format
+subset_long <- as.data.frame(subset) %>%
+  rownames_to_column(var = "Feature") %>%
+  pivot_longer(cols = -Feature, names_to = "Sample", values_to = "Value")
+
+# Create overlapping density plots
+ggplot(subset_long, aes(x = Value, color = Feature)) +
+  geom_density() +
+  labs(title = "CNA Distribution Before Binarise", x = "Value", y = "Density") +
+  theme_minimal()
+```
+
+# Get subset data IDs
+```{r}
+# Read in IDs for each subset
+supervised_data <- readRDS("supervised_ID")
+unsupervised_data <- readRDS("unsupervised_ID")
+```
+
+# Subset data into supervised and unsupervised groups
+```{r}
+cna <- cna_filtered
+cna_supervised <- cna[,colnames(cna)%in% supervised_data$X.Patient.ID ]
+cna_unsupervised <- cna[,colnames(cna)%in% unsupervised_data$X.Patient.ID ]
+
+# Boxplots of the response types that each subset contains
+metadata <- supervised_data[supervised_data$X.Patient.ID %in% colnames(cna_supervised),]
+
+ggplot(metadata, aes(x = as.factor(Response.to.Treatment), fill = as.factor(Response.to.Treatment))) +
+  geom_bar() +
+  geom_text(stat = 'count', aes(label = ..count..), vjust = -0.5) +
+    labs(x = "Response to Treatment")+
+  scale_fill_hue(c = 100) +
+  theme(legend.position = "none")
+
+metadata <- unsupervised_data[unsupervised_data$X.Patient.ID %in% colnames(cna_unsupervised),]
+
+ggplot(metadata, aes(x = as.factor(Response.to.Treatment), fill = as.factor(Response.to.Treatment))) +
+  geom_bar() +
+  geom_text(stat = 'count', aes(label = ..count..), vjust = -0.5) +
+    labs(x = "Response to Treatment")+
+  scale_fill_hue(c = 100) +
+  theme(legend.position = "none")
+```
+
+# Save processed subset
+```{r}
+saveRDS(cna_unsupervised, file = "cna_unsupervised_preprocessed")
+saveRDS(cna_supervised, file = "cna_supervised_preprocessed")
+```
+
+###################################################################################
+# Perform PCA
+```{r}
+library(ggplot2)
+cna <- cna_filtered
+# Read in metadata
+patient_data <- read.delim("ws3_grampian_patient_data.txt")
+# Extract sample ID and Responses from metadata
+metadata <- as.data.frame(patient_data[-c(1,2),c(1,20)])
+dim(metadata)
+metadata <- metadata[metadata$X.Patient.ID %in% colnames(cna),]
+dim(metadata)
+
+# make sure samples overlap with the metadata
+identical(metadata$X.Patient.ID, colnames(cna))
+
+# Impute na with 0 
+cna[is.na(cna)] <- 0
+
+# Perform pca
+pca <- prcomp(t(cna), scale.=TRUE)
+# Visualise pca
+pca_data <- data.frame(Sample = colnames(cna), PC1 = pca$x[,1],PC2 = pca$x[,2], Response = metadata$Response.to.Treatment)
+
+
+# Plot PCA
+ggplot(pca_data, aes(x=PC1, y=PC2, color = factor(Response)))+
+  geom_point(size = 1)+
+  ggtitle("CNA Dataset")+
+  stat_ellipse(geom = "polygon",
+               aes(fill = Response), 
+               alpha = 0.25)+
+  scale_fill_brewer(palette = "Spectral")+
+  scale_color_brewer(palette = "Spectral")+
+  theme(plot.title = element_text(hjust = 0.5))+
+  labs(color = "Response to Treatment")
+``` 

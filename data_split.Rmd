@@ -1,0 +1,77 @@
+---
+title: "Untitled"
+author: "Reuben"
+date: "2024-12-03"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Clear environment
+```{r}
+rm(list = ls())
+```
+
+# Load patient data
+```{r}
+patient_data <- read.delim("ws3_grampian_patient_data.txt")
+```
+
+# Plot distribution of treatment responses
+```{r}
+library(ggplot2)
+metadata <- as.data.frame(patient_data[,c(1,20)])
+metadata <- metadata[-c(1,2),]
+
+# Plot a barplot of the treatment response types
+ggplot(metadata, aes(x = as.factor(Response.to.Treatment), fill = as.factor(Response.to.Treatment))) +
+  geom_bar() +
+  geom_text(stat = 'count', aes(label = ..count..), vjust = -0.5) +
+  scale_fill_hue(c = 100) +
+  theme(legend.position = "none")
+```
+# Split the data into two subsets - one for unsupervised MOFA models, one for supervised model
+```{r}
+library(caret)
+
+# set a random seed for the data split
+set.seed(123)
+
+#split the data in half. Half the data for the unsupervised MOFA models and half for the supervised model.
+# Create a balanced partition, with an equal number of each treatment type in each split
+trainIndex <- createDataPartition(metadata$Response.to.Treatment, p = 0.5, list = FALSE, times = 1)
+
+# Subset the data
+unsupervised_data <- metadata[trainIndex, ]
+supervised_data <- metadata[-trainIndex, ]
+
+# Check the distribution of the response variable in each split
+print("Unsupervised")
+print(table(unsupervised_data$Response.to.Treatment))
+print("Supervised")
+print(table(supervised_data$Response.to.Treatment))
+
+# Plot distributions of both subsets
+ggplot(unsupervised_data, aes(x = as.factor(Response.to.Treatment), fill = as.factor(Response.to.Treatment))) +
+  geom_bar() +
+  geom_text(stat = 'count', aes(label = ..count..), vjust = -0.5) +
+  labs(x = "Response to Treatment")+
+  scale_fill_hue(c = 100) +
+  theme(legend.position = "none")
+
+ggplot(supervised_data, aes(x = as.factor(Response.to.Treatment), fill = as.factor(Response.to.Treatment))) +
+  geom_bar() +
+  geom_text(stat = 'count', aes(label = ..count..), vjust = -0.5) +
+  labs(x = "Response to Treatment")+
+  scale_fill_hue(c = 100) +
+  theme(legend.position = "none")
+```
+
+# Save data subsets
+```{r}
+saveRDS(unsupervised_data, "unsupervised_ID")
+saveRDS(supervised_data, "supervised_ID")
+```
+

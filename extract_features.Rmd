@@ -1,0 +1,102 @@
+---
+title: "Untitled"
+author: "Reuben"
+date: "2024-12-04"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# load data 
+```{r}
+library(MOFA2)
+# read in rna subset and patient metadata
+rna_supervised <- readRDS("RNA_supervised_preprocessed")
+patient_data <- read.delim("ws3_grampian_patient_data.txt")
+# read in best model
+model_15 <- load_model(file.path(getwd(), paste0("MOFA_model_15.hdf5")))
+#subset metadata to only include important columns
+patient_data <- patient_data[,c(1,20)]
+#extract patient response types fro samples in rna subset
+response <- patient_data[patient_data$X.Patient.ID %in% colnames(rna_supervised),2]
+# add response types to rna subset
+rna_supervised <- rbind(rna_supervised, Response = response)
+tail(rna_supervised)
+```
+
+# Extract features
+```{r}
+# Reach a threshold 
+# features that have above a specific mofa weighting will be extracted
+
+threshold <- 0.8 # mofa weighting threshold
+features <- c()
+weights <- as.data.frame(get_weights(model_15, views = "RNA", factors = c(2,4,5,12), abs = TRUE)) # only loo at important factors
+for (y in 1:2){
+  for (x in 1:nrow(weights)){
+    if (weights[x,y] > threshold){
+      features <- c(features,rownames(weights[x,]))
+    }
+  }
+  
+}
+
+RNA_features <- unique(features)
+length(RNA_features)
+# an important thing to note - this code only extracts features from the RNA omics type, howvwer,
+#previously all omics where investigated but all features had weights lower than the set threshold in the important factors
+# therefore to clean up the code only RNA is shown here.
+```
+
+# subset rna to only have high weighted features
+```{r}
+#subset rna supervised data to only include important features
+rna_supervised <- rna_supervised[rownames(rna_supervised) %in% RNA_features,]
+#add patient metadata
+response <- patient_data[patient_data$X.Patient.ID %in% colnames(rna_supervised),2]
+rna_supervised <- rbind(rna_supervised, Response = response)
+write.csv(rna_supervised,"RNA_top0.8_4ft_mod15.csv")
+```
+
+# create heatmaps of the subset rna data only including the hih weighted features
+```{r}
+library(pheatmap)
+
+#save pheatmap as pdf
+save_pheatmap_pdf <- function(x, filename, width=25, height=25) {
+   stopifnot(!missing(x))
+   stopifnot(!missing(filename))
+   pdf(filename, width=width, height=height)
+   grid::grid.newpage()
+   grid::grid.draw(x$gtable)
+   dev.off()
+}
+
+response <- rna_supervised[dim(rna_supervised)[1],]
+# turn the rna subset into a numeric matrix for the pheatmap funtion
+mat <- (rna_supervised[-dim(rna_supervised)[1],])
+mat[] <- lapply(mat, as.numeric)
+mat <- data.matrix(mat)
+# get responses in a df format for the pheatmap function
+response <- t(response)
+response <- as.data.frame(response)
+
+# create heatmap - cluser features and samples
+rna_heatmap <- pheatmap(mat, cluster_rows = TRUE, cluster_cols = TRUE, annotation_col = response, cellwidth = 10, cellheight = 10)
+
+#save heatmap as pdf
+save_pheatmap_pdf(rna_heatmap,"rna_top0.8_2ft_mod15.pdf", width = 20, height = 20)
+
+# make a heatmap for the binarised verion of respnses, complete vs all.
+# binarize the response types
+binary_response <- data.frame(
+  Response = ifelse(response$Response == "Complete", "Complete", "in-complete"),
+  row.names = rownames(response)
+)
+# create heatmap - cluser features and samples
+rna_heatmap_binary <- pheatmap(mat, cluster_rows = TRUE, cluster_cols = TRUE, annotation_col = binary_response, cellwidth = 10, cellheight = 10)
+#save heatmap as pdf
+save_pheatmap_pdf(rna_heatmap_binary,"rna_top0.8_2ft_mod15_binary.pdf", width = 20, height = 20)
+```

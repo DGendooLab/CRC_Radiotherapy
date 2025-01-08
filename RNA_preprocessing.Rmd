@@ -1,0 +1,284 @@
+---
+title: "Untitled"
+author: "Reuben"
+date: "2024-12-03"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Clear environment
+```{r}
+rm(list = ls())
+```
+
+```{r}
+# Read in data
+rna <- read.csv("", row.names = 1)# add directory to rna data - data used here is from S-CORT
+# Check for duplicate genes
+sum(duplicated(rownames(rna)))
+# Check for duplicate samples
+sum(duplicated(colnames(rna)))
+# Check for na
+sum(is.na(rna))
+
+```
+# Remove sex chromosome genes
+```{r}
+# Read the txt file of gene names found on the x and y chromosomes
+sex_chrom_genes  <- readLines("hugo_symbol_sex_genes.txt")
+
+# Function to remove genes from RNA subsets that are found in the sex genes txt file
+remove_sex_chromosome_genes <- function(rna, sex_chrom_genes) {
+  
+  xy_genes <- NULL
+  # Check each gene in sex_chrom_genes
+  for (gene in sex_chrom_genes) {
+    
+    # If gene found in RNA add to xy_gene list
+    if (gene %in% rownames(rna)) {
+      xy_genes <- append(xy_genes, gene)
+    }
+  }
+  
+  # Dimension of RNA before removing genes
+  cat("Dimensions before removal:", dim(rna), "\n")
+  
+  # Remove genes
+  rna <- rna[!(rownames(rna) %in% xy_genes), ]
+  
+  # Dimension of RNA after removing genes
+  cat("Dimensions after removal:", dim(rna), "\n")
+  
+  # Return the updated RNA
+  return((updated_rna = rna))
+}
+
+# Apply function to remove sex chromosome genes to both RNA subsets
+rna <- remove_sex_chromosome_genes(rna, sex_chrom_genes)
+```
+
+# Plot the distribution of samples and genes before scaling and normalisation.
+```{r}
+library(ggplot2)
+library(reshape2)
+
+# Reshape the data to long format
+rna_long <- melt(rna, variable.name = "Sample", value.name = "Expression")
+
+# Create density plot with different lines for each sample
+ggplot(rna_long, aes(x = Expression, color = Sample)) +
+  geom_density() +
+  labs(title = "Density Plots for All Samples", x = "Expression Values", y = "Density") +
+  theme(legend.position = "none")
+
+# Reshape the data to long format
+rna_t <- data.frame(t(rna))
+rownames(rna_t) <- colnames(rna)
+
+# Subset to plot to only plot a subset of genes for an overview of their distributions
+rna_t <- rna_t[,1:50]
+rna_long_genes <- melt(rna_t, variable.name = "Gene", value.name = "Expression")
+
+# Show distribution of genes
+ggplot(data = rna_long_genes, aes(x = Expression, color = Gene)) +
+  geom_density() +
+  labs(title = "Density Plot for Genes", x = "Expression", y = "Density") +
+  theme(legend.position = NULL)
+```
+
+# Subset data and normalise the subsets independantly to prevent dataleakage.
+```{r}
+# Load in IDs for each data subset
+unsupervised_data <- readRDS("unsupervised_ID") #for MOFA
+supervised_data <- readRDS("supervised_ID") #for single omic model
+# Subset RNA data
+rna_supervised <- rna[,colnames(rna)%in% supervised_data$X.Patient.ID ]
+rna_unsupervised <- rna[,colnames(rna)%in% unsupervised_data$X.Patient.ID ]
+```
+
+
+
+```{r}
+library(limma)
+
+# log transform genes to remove the right skew of the data, making the data resemble more of a normal distribution
+rna_supervised  <- log10(rna_supervised  + 1)
+rna_unsupervised  <- log10(rna_unsupervised  + 1)
+# Normalise in limma - using quantile normalise to make samples comparable
+rna_supervised  <- data.frame(normalizeBetweenArrays(rna_supervised , method = "quantile"))
+rna_unsupervised  <- data.frame(normalizeBetweenArrays(rna_unsupervised , method = "quantile"))
+
+```
+
+# Plot sample distribution
+```{r}
+# Reshape the data to long format
+rna_long <- melt(rna_supervised, variable.name = "Sample", value.name = "Expression")
+rna_long2 <- melt(rna_unsupervised, variable.name = "Sample", value.name = "Expression")
+
+# Create density plot with different lines for each sample
+ggplot(rna_long, aes(x = Expression, color = Sample)) +
+  geom_density() +
+  labs(title = "Density Plots for All Normalised Samples", x = "Expression Values", y = "Density") +
+  theme(legend.position = "none")
+ggplot(rna_long2, aes(x = Expression, color = Sample)) +
+  geom_density() +
+  labs(title = "Density Plots for All Normalised Samples", x = "Expression Values", y = "Density") +
+  theme(legend.position = "none")
+
+# Now the data is less right skewed 
+
+
+# Plot gene distribution
+# Reshape the data to long format
+rna_t <- data.frame(t(rna_supervised))
+rownames(rna_t) <- colnames(rna_supervised)
+rna_t2 <- data.frame(t(rna_unsupervised))
+rownames(rna_t2) <- colnames(rna_unsupervised)
+# Subset to plot only a few genes
+rna_t <- rna_t[,1:50]
+rna_long <- melt(rna_t, variable.name = "Gene", value.name = "Expression")
+rna_t2 <- rna_t2[,1:50]
+rna_long2 <- melt(rna_t2, variable.name = "Gene", value.name = "Expression")
+
+# Show distribution of genes
+ggplot(data = rna_long, aes(x = Expression, color = Gene)) +
+  geom_density() +
+  labs(title = "Density Plot for Genes", x = "Expression", y = "Density") +
+  theme(legend.position = NULL)
+ggplot(data = rna_long2, aes(x = Expression, color = Gene)) +
+  geom_density() +
+  labs(title = "Density Plot for Genes", x = "Expression", y = "Density") +
+  theme(legend.position = NULL)
+```
+
+
+# Extract the most varied features
+```{r}
+# Both subsets have to be considered at once, else different features will be extracted from each subset
+
+# Function to extract most varied features
+top_features <- function(rna1, rna2, nfeatures){
+  if (nfeatures > nrow(rna)) {
+  stop("nfeatures cannot be greater than the number of rows in the combined data.")
+}
+  # Combined into one df
+  rna <- cbind(rna1,rna2)
+  # Calculate the variance 
+  var_rna <- apply(rna, 1, var, na.rm = TRUE)
+  genes <- rownames(rna)
+  variance_df <- data.frame(genes, var_rna)
+  # Order the rows based on variance in decreasing order
+  ordered_indices <- order(variance_df$var_rna, decreasing = TRUE)
+  
+  top_indices <- ordered_indices[1:nfeatures]
+  top_varied_genes <- variance_df$genes[top_indices]
+}
+
+# Extract the top 5000 most varied genes considering both RNA subsets simultaneously
+features <- top_features(rna_unsupervised,rna_supervised,5000)
+length(unique(features))
+# Subset both datasets to only include the top 5000 most varied genes
+rna_unsupervised <- rna_unsupervised[features,]
+rna_supervised <- rna_supervised[features,]
+
+# Check for duplicates
+sum(duplicated(rownames(rna_unsupervised)))
+sum(duplicated(rownames(rna_supervised)))
+
+# Save the preprocessed data
+saveRDS(rna_unsupervised, "RNA_unsupervised_preprocessed")
+saveRDS(rna_supervised, "RNA_supervised_preprocessed")
+
+```
+
+# Check the distribution of the most varied genes
+```{r}
+rna_t <- data.frame(t(rna_supervised))
+rownames(rna_t) <- colnames(rna_supervised)
+rna_t2 <- data.frame(t(rna_unsupervised))
+rownames(rna_t2) <- colnames(rna_unsupervised)
+
+# Subset to plot only a few genes
+rna_t <- rna_t[,1:50]
+rna_long <- melt(rna_t, variable.name = "Gene", value.name = "Expression")
+rna_t2 <- rna_t2[,1:50]
+rna_long2 <- melt(rna_t2, variable.name = "Gene", value.name = "Expression")
+
+# Show distribution of genes
+ggplot(data = rna_long, aes(x = Expression, color = Gene)) +
+  geom_density() +
+  labs(title = "Density Plot for Genes", x = "Expression", y = "Density") +
+  theme(legend.position = NULL)
+ggplot(data = rna_long2, aes(x = Expression, color = Gene)) +
+  geom_density() +
+  labs(title = "Density Plot for Genes", x = "Expression", y = "Density") +
+  theme(legend.position = NULL)
+```
+
+##################################################################################
+# Perform PCA - this is done on all samples so preprocessing is done on all samples together for this section
+
+# Preprocess whole RNA dataset
+```{r}
+# Read in rna data
+rna <- read.csv("ws3_grampian_rna_expression_median_per_gene.csv", row.names = 1)
+# Remove the means column from the RNA dataset
+rna <- rna[,-ncol(rna)]
+# Read the txt file of gene names found on the x and y chromosomes
+sex_chrom_genes  <- readLines("hugo_symbol_sex_genes.txt")
+
+# Apply function to remove sex chromosome genes to both RNA subsets
+rna <- remove_sex_chromosome_genes(rna, sex_chrom_genes)
+
+library(limma)
+# log transform genes to remove the right skew of the data, making the data resemble more of a normal distribution
+rna  <- log10(rna  + 1)
+
+# Normalise in limma - using quantile normalise to make samples comparable
+rna  <- data.frame(normalizeBetweenArrays(rna , method = "quantile"))
+
+# Extract the top 5000 most varied genes considering 
+features <- top_features(rna,rna,5000)
+length(unique(features))
+rna <- rna[features,]
+```
+
+# Perform PCA
+```{r}
+library(ggplot2)
+# Read in metadata
+patient_data <- read.delim("ws3_grampian_patient_data.txt")
+
+# Extract sample ID and Responses from metadata
+metadata <- as.data.frame(patient_data[-c(1,2),c(1,20)])
+dim(metadata)
+
+# make sure samples overlap with the metadata
+metadata <- metadata[metadata$X.Patient.ID %in% colnames(rna),]
+dim(metadata)
+
+# Perform pca
+pca <- prcomp(t(rna), scale.=TRUE)
+# Visualise pca
+pca_data <- data.frame(Sample = colnames(rna), PC1 = pca$x[,1],PC2 = pca$x[,2], Response = metadata$Response.to.Treatment)
+
+
+ggplot(pca_data, aes(x=PC1, y=PC2, color = factor(Response)))+
+  geom_point(size = 1)+
+  ggtitle("RNA Dataset")+
+  stat_ellipse(geom = "polygon",
+               aes(fill = Response), 
+               alpha = 0.25)+
+  scale_fill_brewer(palette = "Spectral")+
+  scale_color_brewer(palette = "Spectral")+
+  theme(plot.title = element_text(hjust = 0.5))+
+  labs(color = "Response to Treatment")
+
+
+```
+
+

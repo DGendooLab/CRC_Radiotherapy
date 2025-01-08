@@ -1,0 +1,200 @@
+---
+title: "Mutational_preprocessing"
+output: html_document
+date: "2024-06-27"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+#clear environment
+```{r}
+rm(list = ls())
+```
+
+# Packages
+```{r}
+library(ggplot2)
+library(dplyr)
+library(reshape2)
+library(tidyverse)
+```
+
+# Read in data
+```{r}
+# Read in mutational data
+mutation  <- read.table("", sep='\t', header=TRUE)# add directory to mutational data - data used here is from S-CORT
+```
+
+# Get data into better format
+```{r}
+# Extract reliant columns
+mutations_af <- mutation[,c(1,2,5,12,13)]
+
+# Add new columns to the data:
+#mutation_ID combines Hugo_Symbol and HGVSp_Short into a single identifier.
+# alt_allel_frequency calculates the alternate allele frequency as t_alt_count / (t_alt_count + t_ref_count)
+mutations_af <- mutations_af %>%
+  mutate(mutation_ID = paste (Hugo_Symbol,HGVSp_Short, sep = "_"))%>%
+  mutate(alt_allel_frequency = t_alt_count / (t_alt_count + t_ref_count))
+# Extract relavant columns for further preprocessing
+mutations_af <- mutations_af[,c(2,6,7)]
+
+# Make data wide format
+#Cell values are the mean alternate allele frequency for each mutation.
+#Missing values are filled with 0.
+mutation_wide <- dcast(mutations_af, Tumor_Sample_Barcode ~ mutation_ID, value.var = "alt_allel_frequency", fun.aggregate = mean, fill = 0)
+mutation <- as.data.frame(t(mutation_wide))
+
+
+# Extract the first row as column names
+new_colnames <- as.character(unlist(mutation[1, ]))
+
+# Remove the first row from the data frame
+mutation <- mutation[-1, ]
+
+# Assign the new column names to the data frame
+colnames(mutation) <- new_colnames
+```
+
+# Remove sparsity
+```{r}
+# Calculate 2% of the number of samples.
+num_samples <- length(colnames(mutation))
+sample_threshold <- round(num_samples/50)
+
+# Filter Mutations based on threshold - 2%
+mut_filtered <- NULL
+for (row in 1:nrow(mutation)){
+  count <- 0 # reset count for each row
+  for (col in 1:ncol(mutation)){
+    if (!is.na(mutation[row,col]) && (round(as.numeric(mutation[row,col]), digits = 2) != 0.00)){
+      count <- count + 1
+    }
+  }
+  if (count >= sample_threshold){
+    mut_filtered <- rbind(mut_filtered, (mutation[row,]))
+  }
+}
+```
+
+# Plot distribution 
+```{r}
+# Convert the transposed dataframe to a long format
+mut_filtered_long <- as.data.frame(mut_filtered) %>%
+  rownames_to_column(var = "Feature") %>%
+  pivot_longer(cols = -Feature, names_to = "Sample", values_to = "Value")
+
+# Create overlapping density plots
+ggplot(mut_filtered_long, aes(x = Value, color = Feature)) +
+  geom_density() +
+  labs(title = "Mutational distributions", x = "Value", y = "Density") +
+  theme_minimal()
+
+```
+
+# Binarise the data
+```{r}
+# Binarizing function
+binarise <- function(x){
+  x <- round(x)
+  if (!is.na(x) && x != 0){
+    x <- 1
+  }
+  return (x)
+}
+
+mut_rownames <- rownames(mut_filtered)
+# Make sure all values are numeric
+mut_filtered <- as.data.frame(lapply(mut_filtered, as.numeric))
+# Binarize data
+mutation_binary <- as.data.frame(lapply(mut_filtered, function(x) ifelse(is.na(x) | x == 0, x, 1)))
+rownames(mutation_binary) <- mut_rownames
+
+# Check the number of 0 and 1 values in each row
+sum_1 <- rowSums(mutation_binary== 1, na.rm = TRUE)
+sum_0 <- rowSums(mutation_binary == 0, na.rm = TRUE)
+print(sum_1)
+print(sum_0)
+```
+
+# Subset data
+```{r}
+# Get subset data IDs
+supervised_data <- readRDS("supervised_ID")
+unsupervised_data <- readRDS("unsupervised_ID")
+
+# Subsetdata into supervised and unsupervised groups
+mutation_binary_supervised <- mutation_binary[,colnames(mutation_binary)%in% supervised_data$X.Patient.ID ]
+mutation_binary_unsupervised <- mutation_binary[,colnames(mutation_binary)%in% unsupervised_data$X.Patient.ID ]
+```
+
+```{r}
+# Boxplots of response types that each subset contains
+metadata <- supervised_data[supervised_data$X.Patient.ID %in% colnames(mutation_binary_supervised),]
+
+ggplot(metadata, aes(x = as.factor(Response.to.Treatment), fill = as.factor(Response.to.Treatment))) +
+  geom_bar() +
+  geom_text(stat = 'count', aes(label = ..count..), vjust = -0.5) +
+    labs(x = "Response to Treatment")+
+  scale_fill_hue(c = 100) +
+  theme(legend.position = "none")
+
+metadata <- unsupervised_data[unsupervised_data$X.Patient.ID %in% colnames(mutation_binary_unsupervised ),]
+
+ggplot(metadata, aes(x = as.factor(Response.to.Treatment), fill = as.factor(Response.to.Treatment))) +
+  geom_bar() +
+  geom_text(stat = 'count', aes(label = ..count..), vjust = -0.5) +
+    labs(x = "Response to Treatment")+
+  scale_fill_hue(c = 100) +
+  theme(legend.position = "none")
+```
+
+# save processed data
+```{r}
+saveRDS(mutation_binary_supervised , file = "mutation_supervised_preprocessed")
+saveRDS(mutation_binary_unsupervised , file = "mutation_unsupervised_preprocessed")
+```
+
+##############################################################################
+# Perform PCA - on all samples not just one subset
+```{r}
+library(ggplot2)
+
+# make sure binarized mutational data is numeric
+mutation_binary[] <- lapply(mutation_binary, as.numeric)
+
+# Read in metadata
+patient_data <- read.delim("ws3_grampian_patient_data.txt")
+
+# Extract sample ID and Responses from metadata
+metadata <- as.data.frame(patient_data[-c(1,2),c(1,20)])
+dim(metadata)
+# make sure samples overlap with the metadata
+metadata <- metadata[metadata$X.Patient.ID %in% colnames(mutation_binary),]
+dim(metadata)
+
+# Check the same order
+identical(metadata$X.Patient.ID, colnames(mutation_binary))
+
+# Impute na with 0 
+mutation_binary[is.na(mutation_binary)] <- 0
+
+# Perform pca
+pca <- prcomp(t(mutation_binary), scale.=TRUE)
+# Visualise pca
+pca_data <- data.frame(Sample = colnames(mutation_binary), PC1 = pca$x[,1],PC2 = pca$x[,2], Response = metadata$Response.to.Treatment)
+
+# Plot PCA
+ggplot(pca_data, aes(x=PC1, y=PC2, color = factor(Response)))+
+  geom_point(size = 1)+
+  ggtitle("Mutational Dataset")+
+  stat_ellipse(geom = "polygon",
+               aes(fill = Response), 
+               alpha = 0.25)+
+  scale_fill_brewer(palette = "Spectral")+
+  scale_color_brewer(palette = "Spectral")+
+  theme(plot.title = element_text(hjust = 0.5))+
+  labs(color = "Response to Treatment")
+``` 

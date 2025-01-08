@@ -1,0 +1,296 @@
+---
+title: "methylation_preprocessing3.0"
+output: html_document
+date: "2024-07-23"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Clear environment
+```{r}
+rm(list = ls())
+```
+
+# Packages
+```{r}
+library(data.table)
+library(wateRmelon)
+library(ggplot2)
+# infinium MethylationEPIC BeadChip (850K Array)
+library(IlluminaHumanMethylationEPICanno.ilm10b4.hg19)
+```
+
+# Load methylation data 
+```{r}
+methylation <- fread("") # add directory to methylation data - data used here is from S-CORT
+# Load methylation probe metadata
+meth_meta <- fread("", fill=TRUE)# download MethylationEPIC_v-1-0_B4.csv from https://emea.support.illumina.com/downloads/infinium-methylationepic-v1-0-product-files.html and set the path to this file.
+```
+
+```{r}
+# Get methylation data into better formats
+meth_meta <- meth_meta[-c(1:7),c(1,7)]
+# Convert to df
+methylation <- as.data.frame(methylation)
+rownames(methylation) <- methylation$IlmnID
+methylation <- methylation[,-1]
+```
+
+# Identify and remove CpG sites on the sex chromosomes
+```{r}
+# Load the annotation data
+data("IlluminaHumanMethylationEPICanno.ilm10b4.hg19")
+anno <- getAnnotation(IlluminaHumanMethylationEPICanno.ilm10b4.hg19)
+
+# Identify CpG sites on the sex chromosomes (X and Y)
+sex_chr <- anno[anno$chr %in% c("chrX", "chrY"), ]
+sex_chr_ids <- rownames(sex_chr)
+length(sex_chr_ids)
+# check that annotation names match methylation names
+methylation[rownames(methylation) %in% rownames(anno),]
+
+# Remove CpG sites on sex chromosomes from data
+dim(methylation)
+methylation <- methylation[!rownames(methylation) %in% sex_chr_ids, ]
+dim(methylation)
+```
+
+# Subset methylation data
+```{r}
+# load sample IDs for subsets
+supervised_data <- readRDS("supervised_ID")
+unsupervised_data <- readRDS("unsupervised_ID")
+
+# Subset methylation data
+meth_unsupervised <- methylation[,colnames(methylation) %in% unsupervised_data$X.Patient.ID ]
+meth_supervised <- methylation[,colnames(methylation) %in% supervised_data$X.Patient.ID ]
+
+# Boxplots of the responses types that each subset contains
+metadata <- unsupervised_data[unsupervised_data$X.Patient.ID %in% colnames(meth_unsupervised),]
+
+ggplot(metadata, aes(x = as.factor(Response.to.Treatment), fill = as.factor(Response.to.Treatment))) +
+  geom_bar() +
+  geom_text(stat = 'count', aes(label = ..count..), vjust = -0.5) +
+    labs(x = "Response to Treatment")+
+  scale_fill_hue(c = 100) +
+  theme(legend.position = "none")
+
+metadata <- supervised_data[supervised_data$X.Patient.ID %in% colnames(meth_supervised),]
+
+ggplot(metadata, aes(x = as.factor(Response.to.Treatment), fill = as.factor(Response.to.Treatment))) +
+  geom_bar() +
+  geom_text(stat = 'count', aes(label = ..count..), vjust = -0.5) +
+    labs(x = "Response to Treatment")+
+  scale_fill_hue(c = 100) +
+  theme(legend.position = "none")
+```
+
+# Make a vector of the probe types
+# These are used for BMIQ normalisation
+```{r}
+# Filter metadata to only include rows that are in the methylation data
+meth_meta <- meth_meta[meth_meta$V1 %in% rownames(methylation),]
+
+# Make sure the order aligns between the metadata and methylation data.
+meth_meta <- meth_meta[order(meth_meta$V1),]
+methylation <- methylation[order(rownames(methylation)),]
+# Extract probe type information
+meth_meta <- meth_meta$V7
+
+# convert probe types into numbers
+meth_meta <- as.vector(meth_meta)
+meth_meta <- ifelse(meth_meta == 'I', 1, ifelse(meth_meta == 'II', 2, NA))
+
+```
+
+# Normalise data using BMIQ
+```{r}
+# function to perform bmiq normalisation
+normalise <- function(methylation){
+  
+  methylation <- as.matrix(methylation) 
+  # Provide methylation data and probe types
+  BMIQ_methylation <- BMIQ(beta.v = methylation, design.v = meth_meta)
+  
+  BMIQ_methylation_df <- BMIQ_methylation$nbeta
+}
+```
+
+# R session is likely to crash, so its recommended to just read in the files that i have already normalised in the chunk after this.
+```{r}
+# Save normalise subsets
+meth_unsupervised_normalised <- normalise(meth_unsupervised)
+saveRDS(meth_unsupervised_normalised, "meth_unsupervised_normalised")
+
+meth_supervised_normalised <- normalise(meth_supervised)
+saveRDS(meth_supervised_normalised, "meth_supervised_normalised")
+```
+
+# Read in normalised files if R session crashes
+```{r}
+meth_unsupervised_normalised <- readRDS("meth_unsupervised_normalised")
+meth_supervised_normalised <- readRDS("meth_supervised_normalised")
+```
+
+# Convert beta values to m-values
+```{r}
+# Function to convert beta values to m-values 
+m_value_transform <- function(beta) {
+  return(log2(beta / (1 - beta)))
+}
+# Apply to both subsets
+meth_unsupervised_m_normalised <- m_value_transform(meth_unsupervised_normalised)
+meth_supervised_m_normalised <- m_value_transform(meth_supervised_normalised)
+```
+
+# Extract most varying features
+```{r}
+# Both subsets have to be considered at once,else different features will be extracted from each subset
+top_features <- function(methyaltion1, methyaltion2, nfeatures){
+  
+  methylation <- cbind(methyaltion1, methyaltion2)
+  # work out variance of each row
+  met_var <- apply(methylation , 1, var, na.rm = TRUE)
+    
+  # order rows based on variance -returns the indices of the genes
+  met_var <- order(met_var, decreasing = TRUE)
+    
+  # select the top varied genes
+  met_var <- met_var[1:nfeatures]
+    
+  # extract most varied features
+  methylation<- methylation[met_var,]
+  dim(methylation)
+  methylation <- as.data.frame(methylation)
+  return(rownames(methylation))
+}
+# convert data subsets into dataframes 
+meth_unsupervised_m_normalised <- as.data.frame(meth_unsupervised_m_normalised)
+meth_supervised_m_normalised <- as.data.frame(meth_supervised_m_normalised)
+
+# get the top 5000 features
+features <- top_features(meth_supervised_m_normalised, meth_unsupervised_m_normalised , nfeatures =5000)
+
+
+# Subset datasets to only include top features
+meth_unsupervised_m_normalised <- meth_unsupervised_m_normalised[features,] 
+meth_supervised_m_normalised <- meth_supervised_m_normalised[features,] 
+```
+
+```{r}
+#save preprocessed datasets
+saveRDS(meth_unsupervised_m_normalised, "methylation_unsupervised_preprocessed")
+saveRDS(meth_supervised_m_normalised, "methylation_supervised_preprocessed")
+```
+
+
+
+# PCA plot including all samples - so renormalise the whole dataset independently for the PCA plot
+#################################################################################
+
+```{r}
+# Read data
+methylation <- fread("ws3_grampian_methylation_probes.csv")
+meth_meta <- fread("MethylationEPIC_v-1-0_B4.csv", fill=TRUE)
+```
+
+```{r}
+# Get data into better format
+meth_meta <- meth_meta[-c(1:7),c(1,7)]
+
+methylation <- as.data.frame(methylation)
+rownames(methylation) <- methylation$IlmnID
+methylation <- methylation[,-1]
+```
+
+# Convert probe types to numbers
+```{r}
+meth_meta <- meth_meta[meth_meta$V1 %in% rownames(methylation),]
+meth_meta <- meth_meta[order(meth_meta$V1),]
+methylation <- methylation[order(rownames(methylation)),]
+
+meth_meta <- meth_meta$V7
+
+meth_meta <- as.vector(meth_meta)
+meth_meta <- ifelse(meth_meta == 'I', 1, ifelse(meth_meta == 'II', 2, NA))
+
+methylation <- as.matrix(methylation)
+```
+
+# Normalise data
+```{r}
+BMIQ_methylation <- BMIQ(beta.v = methylation, design.v = meth_meta)
+
+BMIQ_methylation_df <- BMIQ_methylation$nbeta
+```
+
+# Convert b-values to m-values
+```{r}
+BMIQ_methylation_df <- 
+#make m values 
+m_value_transform <- function(beta) {
+  return(log2(beta / (1 - beta)))
+}
+m_values <- m_value_transform(BMIQ_methylation_df)
+```
+
+# Extract the top 5000 features
+```{r}
+#extract features
+#work out variance of each row
+met_var <- apply(m_values , 1, var, na.rm = TRUE)
+
+#order rows based on variance -returns the indices of the genes
+met_var <- order(met_var, decreasing = TRUE)
+
+#select the top varied genes
+met_var <- met_var[1:5000]
+
+#extract most varied genes from the df
+m_values  <- m_values [met_var,]
+dim(m_values)
+m_values <- as.data.frame(m_values)
+
+# save normalised data
+saveRDS(m_values , file = "BMIQ_m_methylation")
+
+```
+
+# Perform PCA
+```{r}
+library(ggplot2)
+
+# Read in methylation data including all samples that has been normalised using the previous method
+methylation <- readRDS("BMIQ_m_methylation")
+# Read in the metadata
+patient_data <- read.delim("ws3_grampian_patient_data.txt")
+# Extract sample ID and Responses from metadata
+metadata <- as.data.frame(patient_data[-c(1,2),c(1,20)])
+
+# make sure samples overlap with the metadata
+dim(metadata)
+metadata <- metadata[metadata$X.Patient.ID %in% colnames(methylation),]
+dim(metadata)
+
+# Check the same order
+identical(metadata$X.Patient.ID, colnames(methylation))
+
+# Perform pca
+pca <- prcomp(t(methylation), scale.=TRUE)
+# Visualise pca
+pca_data <- data.frame(Sample = colnames(methylation), PC1 = pca$x[,1],PC2 = pca$x[,2], Response = metadata$Response.to.Treatment)
+
+ggplot(pca_data, aes(x=PC1, y=PC2, color = factor(Response)))+
+  geom_point(size = 1)+
+  ggtitle("Methylation Dataset")+
+  stat_ellipse(geom = "polygon",
+               aes(fill = Response), 
+               alpha = 0.25)+
+  scale_fill_brewer(palette = "Spectral")+
+  scale_color_brewer(palette = "Spectral")+
+  theme(plot.title = element_text(hjust = 0.5))+
+  labs(color = "Response to Treatment")
+``` 
+

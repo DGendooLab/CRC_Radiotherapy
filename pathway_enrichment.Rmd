@@ -1,0 +1,95 @@
+---
+title: "Untitled"
+author: "Reuben"
+date: "2024-12-11"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+packages
+```{r}
+library(MOFA2)
+library(clusterProfiler)
+library(org.Hs.eg.db)
+```
+
+# load mofa model
+```{r}
+outfile <- file.path(getwd(), paste0("MOFA_model_15.hdf5"))
+model <- load_model(outfile)
+```
+
+#pathway enrichment analysis
+
+
+```{r}
+#extract the top 100 features in each factor of intrest
+get_feature <- function(factor_list, view, n_features,model){
+  
+  feature_list <- c()
+  
+  #extract weights
+  weights <- get_weights(model, views = "all", factors = "all", abs = TRUE)
+  # subset to the RNA omics and the factors of interest
+  weights <- (as.data.frame(weights[[view]]))
+  weights <- (as.data.frame(weights[,factor_list]))
+  # loop over each factor
+  for (x in 1:length(factor_list)){
+  # order the weights
+  weights <- arrange(weights, desc(weights[,x]))
+  # extract a set number of the top weights
+  feature_list <- c(feature_list, rownames(weights[1:n_features,]))
+}
+  return (feature_list)
+}
+
+#features to extract from 
+factor_list <- c(2,4,5,12)
+
+#extract top 100 features from each factor correlated with response, in the RNA dataset
+top_genes <- get_feature(factor_list, "RNA", 100,model)
+top_genes <- unique(top_genes)
+
+#convert the gene names from SYMBOL to ENTREZID
+genes_names <- bitr(top_genes, fromType = "SYMBOL", toType = "ENTREZID", OrgDb = org.Hs.eg.db)
+genes <- genes_names$ENTREZID
+
+#enrichment analysis with go
+
+#molecular function (MF), biological process (BP), and cellular component (CC).
+go_enrichment <- function(gene_list, ontology, n_categories){
+  enrichment_go <- enrichGO(
+    gene = gene_list,
+    OrgDb = org.Hs.eg.db,
+    keyType = "ENTREZID",
+    ont =  ontology,
+    pvalueCutoff = 0.05,
+    pAdjustMethod = "BH",
+    qvalueCutoff = 0.2,
+    minGSSize = 10,
+    maxGSSize = 500,
+    readable = FALSE,
+    pool = FALSE
+  )
+  print(dotplot(enrichment_go, showCategory = n_categories))
+return(summary(enrichment_go))}
+
+#enrichmentgo plots
+bp <- go_enrichment(genes, "BP", 5)
+bp <- bp[,c(2,3,4,5,6,9)]
+mf <- go_enrichment(genes, "MF", 5)
+mf <- mf[,c(2,3,4,5,6,9)]
+cc <- go_enrichment(genes, "CC", 5)
+cc <- cc[,c(2,3,4,5,6,9)]
+
+write.csv(bp,file = "biological_process_pathway_enrichment.csv", row.names = FALSE)
+write.csv(mf,file = "molecular_function_pathway_enrichment.csv", row.names = FALSE)
+write.csv(cc,file = "cellular_component_pathway_enrichment.csv", row.names = FALSE)
+
+```
+
+
+
