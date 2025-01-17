@@ -286,6 +286,16 @@ model_15 <- load_model(outfile)
 get_variance_explained(model_15)
 ```
 
+#check correlation of factors
+```{r}
+# Calculate the correlation between factors 
+cor_matrix <- plot_factor_cor(object = model_15, method = "pearson")
+# plot correlation between factors
+plot_factor_cor(model_15)
+#save correlation matrix between factors
+write.csv(cor_matrix$corr, "correlation_matrix_between_factors.csv", row.names = TRUE)
+```
+
 # add metadata to model 15
 ```{r}
 #subset metdata to only include samples that match the matricies input into MOFA
