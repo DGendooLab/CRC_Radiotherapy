@@ -423,7 +423,7 @@ correlated_covariates <- correlate_factors_with_covariates(model_15,
   plot="r", return_data = TRUE
 )
 #save as csv for supplementary information
-write.csv(correlated_covariates, file = "correlated_covariates.csv", row.names = TRUE)
+write.csv(correlated_covariates, file = "correlation_coef_covariates.csv", row.names = TRUE)
 
 # Plot fewer Covariates for better view
 correlate_factors_with_covariates(model_15, 
@@ -432,8 +432,37 @@ correlate_factors_with_covariates(model_15,
   plot="log_pval"
 )
 
+```
+#extract the log adjusted p-values from the correlation analysis and save them.
+```{r}
+log_p_values <- correlate_factors_with_covariates(model_15, 
+  covariates = c(
+  "Pretreatment_Tumour_state", 
+  "Pretreatment_Node_state", 
+  "Pretreatment_Metastasis_state",
+ "EMVI",
+  "CRM",
+  "TME_Quality",
+  "Post_Treatment_Tumour_Stage",
+  "Post_Treatment_Node_Stage" ,
+  "Post_Treatment_TNM_Staging",
+  "Post_Treatment_Dukes" ,
+  "Bowel_Screen_Detected" , 
+  "Gender" ,
+  "Overall_Survival_Status", 
+  "Overall_Survival_Months" ,
+  "Disease_Free_Status" ,
+  "Disease_Free_Months" ,
+  "Tumour_Differentiation",
+  "Age",
+  "Treatment_type", 
+  "Response" ), 
+  abs = TRUE,
+  plot="log_pval", 
+ return_data = TRUE
+)
 
-
+write.csv(log_p_values, file = "correlation_log_pvals_covariates.csv", row.names = TRUE)
 ```
 
 # boxplots of samples in each factor correlated to response
