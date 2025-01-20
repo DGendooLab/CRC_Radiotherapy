@@ -25,7 +25,19 @@ response <- patient_data[patient_data$X.Patient.ID %in% colnames(rna_supervised)
 rna_supervised <- rbind(rna_supervised, Response = response)
 tail(rna_supervised)
 ```
+#Get MOFA weights and save as files
+```{r}
+weights_RNA <- as.data.frame(get_weights(model_15, views = "RNA", factors = "all", abs = TRUE))
+weights_CNA <- as.data.frame(get_weights(model_15, views = "CNA", factors = "all", abs = TRUE))
+weights_Methylation <-as.data.frame(get_weights(model_15, views = "Methylation", factors = "all", abs = TRUE))
+weights_Mutation <-as.data.frame(get_weights(model_15, views = "Mutation", factors = "all", abs = TRUE))
 
+#save as files
+write.csv(weights_RNA,"RNA_MOFA_weights.csv")
+write.csv(weights_CNA,"CNA_MOFA_weights.csv")
+write.csv(weights_Methylation,"Methylation_MOFA_weights.csv")
+write.csv(weights_Mutation,"Mutation_MOFA_weights.csv")
+```
 # Extract features
 ```{r}
 # Reach a threshold 
