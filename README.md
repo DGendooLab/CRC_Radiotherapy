@@ -1,4 +1,4 @@
-# Reuben_thesis_project
+# CRC Radiotherapy
 
 This repository contains the code used for the project. The project involves data preprocessing and model building, including MOFA (Multi-Omics Factor Analysis) and Random Forest model.
 
