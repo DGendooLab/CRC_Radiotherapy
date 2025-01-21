@@ -45,6 +45,5 @@ The scripts are organised to follow the workflow of the project:
   - Build and evaluate a Random Forest model using the features extracted from the MOFA model.  
 
 ### **Data avalibility**
-- Data was initially provided by S-CORT and is not avalible here.
-- Serveral preprocessed datasets are provided here to allow running of the later scripts as well as a construced MOFA model.
+- Preprocessed datasets are provided here to allow running of the later scripts as well as a construced MOFA model.
 ---
