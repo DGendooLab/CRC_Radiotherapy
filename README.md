@@ -46,15 +46,22 @@ The scripts are organised to follow the workflow of the project:
 
 ### **Data avalibility**
 - Preprocessed datasets are provided here to allow running of the later scripts as well as a construced MOFA model.
-- The preprocessed datasets are as follows:
--
-- 
--   **`RNA_supervised_preprocessed`**
--   **`RNA_unsupervised_preprocessed`**
--   **`CNA_supervised_preprocessed`**
--   **`CNA_unsupervised_preprocessed`**
--   **`mutation_supervised_preprocessed`**
--   **`mutation_unsupervised_preprocessed`**
--   **`methylation_supervised_preprocessed`**
--   **`methylation_unsupervised_preprocessed`** 
+## **Preprocessed Datasets**
+
+### **1. RNA Datasets**
+- `RNA_supervised_preprocessed`
+- `RNA_unsupervised_preprocessed`
+
+### **2. CNA Datasets**
+- `CNA_supervised_preprocessed`
+- `CNA_unsupervised_preprocessed`
+
+### **3. Mutation Datasets**
+- `mutation_supervised_preprocessed`
+- `mutation_unsupervised_preprocessed`
+
+### **4. Methylation Datasets**
+- `methylation_supervised_preprocessed`
+- `methylation_unsupervised_preprocessed`
+
 ---
