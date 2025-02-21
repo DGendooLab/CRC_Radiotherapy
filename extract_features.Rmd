@@ -72,10 +72,48 @@ rna_supervised <- rbind(rna_supervised, Response = response)
 write.csv(rna_supervised,"RNA_top0.8_4ft_mod15.csv")
 ```
 
-# create heatmaps of the subset rna data only including the hih weighted features
+# create heatmaps of the subset rna data only including the hihg weighted features
 ```{r}
 library(pheatmap)
 
+response <- rna_supervised[dim(rna_supervised)[1],]
+
+# Convert RNA subset into a numeric matrix for pheatmap
+mat <- (rna_supervised[-dim(rna_supervised)[1],])
+mat[] <- lapply(mat, as.numeric)
+mat <- data.matrix(mat)
+
+# Convert response row into a data frame
+response <- t(response)
+response <- as.data.frame(response)
+
+# Binarize the response types
+binary_response <- data.frame(
+  Response = ifelse(response$Response == "Complete", "Complete", "in-complete"),
+  row.names = rownames(response)
+)
+
+# Perform hierarchical clustering
+hc <- hclust(dist(t(mat)), method = "ward.D2")  
+
+# Extract clustering order
+ordered_samples <- hc$order
+
+# Find indices of "Complete" and "in-complete" samples within the clustered order
+complete_idx <- ordered_samples[binary_response$Response[ordered_samples] == "Complete"]
+incomplete_idx <- ordered_samples[binary_response$Response[ordered_samples] == "in-complete"]
+new_order <- c(complete_idx, incomplete_idx)
+
+# Reorder matrix and annotations
+mat <- mat[, new_order]
+binary_response <- binary_response[new_order, , drop = FALSE]
+
+# Generate heatmap with row clustering but fixed sample order
+rna_heatmap_binary <- pheatmap(mat, cluster_rows = TRUE, cluster_cols = FALSE, 
+                               annotation_col = binary_response, cellwidth = 10, cellheight = 10 )
+dim(mat)
+
+###################################################
 #save pheatmap as pdf
 save_pheatmap_pdf <- function(x, filename, width=25, height=25) {
    stopifnot(!missing(x))
@@ -86,29 +124,6 @@ save_pheatmap_pdf <- function(x, filename, width=25, height=25) {
    dev.off()
 }
 
-response <- rna_supervised[dim(rna_supervised)[1],]
-# turn the rna subset into a numeric matrix for the pheatmap funtion
-mat <- (rna_supervised[-dim(rna_supervised)[1],])
-mat[] <- lapply(mat, as.numeric)
-mat <- data.matrix(mat)
-# get responses in a df format for the pheatmap function
-response <- t(response)
-response <- as.data.frame(response)
-
-# create heatmap - cluser features and samples
-rna_heatmap <- pheatmap(mat, cluster_rows = TRUE, cluster_cols = TRUE, annotation_col = response, cellwidth = 10, cellheight = 10)
-
 #save heatmap as pdf
-save_pheatmap_pdf(rna_heatmap,"rna_top0.8_2ft_mod15.pdf", width = 20, height = 20)
-
-# make a heatmap for the binarised verion of respnses, complete vs all.
-# binarize the response types
-binary_response <- data.frame(
-  Response = ifelse(response$Response == "Complete", "Complete", "in-complete"),
-  row.names = rownames(response)
-)
-# create heatmap - cluser features and samples
-rna_heatmap_binary <- pheatmap(mat, cluster_rows = TRUE, cluster_cols = TRUE, annotation_col = binary_response, cellwidth = 10, cellheight = 10)
-#save heatmap as pdf
-save_pheatmap_pdf(rna_heatmap_binary,"rna_top0.8_2ft_mod15_binary.pdf", width = 20, height = 20)
+save_pheatmap_pdf(rna_heatmap_binary,"rna_binary_heatmap.pdf", width = 20, height = 20)
 ```
