@@ -1,0 +1,322 @@
+---
+title: "Untitled"
+author: "Reuben"
+date: "2025-11-26"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(dplyr)
+library(clusterProfiler)
+library(org.Hs.eg.db)
+library(msigdbr)
+library(enrichplot)
+library(MOFA2)
+library(ReactomePA)
+library(KEGGREST)
+library(ggplot2)
+```
+
+# load mofa moadel
+```{r}
+outfile <- file.path(getwd(), paste0("MOFA_model_15.hdf5"))
+model <- load_model(outfile)
+```
+
+```{r}
+threshold <- 0.8 # set mofa weight threshold
+features <- c()
+# load the transcriptomic feature weights from the important factors
+weights <- as.data.frame(get_weights(model, views = "RNA", factors = c(2,4,5,12), abs = TRUE))
+# loop through all important factors and extract the features that reach the threshold.
+for (y in 1:4){
+  for (x in 1:nrow(weights)){
+    if (weights[x,y] > threshold){
+      features <- c(features,rownames(weights[x,]))
+    }
+  }
+}
+#check for duplicates
+RNA_features <- unique(features)
+```
+
+# check what features were extracted
+```{r}
+RNA_features
+```
+
+# load the transcriptomic suprvised dataset
+```{r}
+rna_supervised <- readRDS("RNA_supervised_preprocessed")
+```
+
+```{r}
+genes_interest <- unique(RNA_features)           # MOFA-selected genes 
+background_genes <- unique(rownames(rna_supervised))  # all genes used in MOFA
+```
+
+
+```{r}
+# MSigDB Hallmark (SYMBOLs)
+msig_h <- msigdbr(species = "Homo sapiens", collection = "H") %>%
+  dplyr::select(gs_name, gene_symbol) %>%
+  as.data.frame()
+# Hallmark ORA (MSigDB)
+eh_Hallmark <- enricher(
+  gene          = genes_interest,
+  universe      = background_genes,
+  TERM2GENE     = msig_h,
+  pAdjustMethod = "BH",
+  pvalueCutoff  = 0.05,
+  minGSSize     = 10,
+  maxGSSize     = 500
+)
+p <- dotplot(eh_Hallmark, title="MSigDB Hallmark")
+#save plot
+#ggsave("msigdb_hallmark_enrichment.png", plot = p, width = 8, height = 6, dpi = 300)
+p
+```
+
+
+```{r}
+####################################################################
+# GO enrichment (BP, MF, CC)
+# Biological Process
+ego_BP <- enrichGO(
+  gene          = genes_interest,
+  universe      = background_genes,
+  OrgDb         = org.Hs.eg.db,
+  keyType       = "SYMBOL",
+  ont           = "BP",
+  pAdjustMethod = "BH",
+  qvalueCutoff  = 0.05,
+  minGSSize     = 10,
+  maxGSSize     = 500,
+  readable = TRUE
+)
+
+# Molecular Function
+ego_MF <- enrichGO(
+  gene          = genes_interest,
+  universe      = background_genes,
+  OrgDb         = org.Hs.eg.db,
+  keyType       = "SYMBOL",
+  ont           = "MF",
+  pAdjustMethod = "BH",
+  qvalueCutoff  = 0.05,
+  readable      = TRUE,
+  minGSSize     = 10,
+  maxGSSize     = 500
+)
+
+# Cellular Component
+ego_CC <- enrichGO(
+  gene          = genes_interest,
+  universe      = background_genes,
+  OrgDb         = org.Hs.eg.db,
+  keyType       = "SYMBOL",
+  ont           = "CC",
+  pAdjustMethod = "BH",
+  qvalueCutoff  = 0.05,
+  readable      = TRUE,
+  minGSSize     = 10,
+  maxGSSize     = 500
+)
+#save plots
+p <- dotplot(ego_BP, title="GO: Biological Process")
+p
+#ggsave("gh_biological_process_enrichment.png", plot = p, width = 8, height = 6, dpi = 300)
+
+p <- dotplot(ego_MF, title="GO: Molecular Function")
+p
+#ggsave("gh_molecular_function_enrichment.png", plot = p, width = 8, height = 6, dpi = 300)
+
+p <- dotplot(ego_CC, title="GO: Cellular Component")
+p
+#ggsave("go_cellular_component_enrichment.png", plot = p, width = 8, height = 6, dpi = 300)
+```
+```{r}
+## --- MSigDB C2 (SYMBOLs) -----------------------------------------------
+msig_c2 <- msigdbr(species = "Homo sapiens", category = "C2") %>%
+  dplyr::select(gs_name, gene_symbol) %>%
+  as.data.frame()
+
+eh_C2 <- enricher(
+  gene          = genes_interest,      # SYMBOLs
+  universe      = background_genes,    # SYMBOLs
+  TERM2GENE     = msig_c2,
+  pAdjustMethod = "BH",
+  pvalueCutoff  = 0.05,
+  minGSSize     = 10,
+  maxGSSize     = 500
+)
+
+
+p <- dotplot(eh_C2, title="MSigDB C2")
+p
+#ggsave("msigdb_c2_enrichment.png", plot = p, width = 8, height = 6, dpi = 300)
+```
+
+
+```{r}
+#############################################################
+#KEGG (requires Entrez IDs)
+
+# We'll convert SYMBOLs to ENTREZ for these analyses.
+gene_map <- bitr(genes_interest, fromType = "SYMBOL", toType = "ENTREZID", OrgDb = org.Hs.eg.db)
+bg_map   <- bitr(background_genes, fromType = "SYMBOL", toType = "ENTREZID", OrgDb = org.Hs.eg.db)
+genes_entrez <- unique(gene_map$ENTREZID)
+bg_entrez    <- unique(bg_map$ENTREZID)
+
+
+# KEGG pathway enrichment
+ek <- enrichKEGG(
+  gene          = genes_entrez,
+  universe      = bg_entrez,
+  organism      = "hsa",
+  pAdjustMethod = "BH",
+  qvalueCutoff  = 0.05,
+  minGSSize     = 10,
+  maxGSSize     = 5000
+)
+
+########################################################################
+
+dotplot(ek, title="KEGG Pathways")
+
+```
+
+
+####################################################################################
+
+```{r}
+
+## --- Reactome (ENTREZ) --------------------------------------------------
+er_Reactome <- ReactomePA::enrichPathway(
+  gene          = genes_entrez,  # ENTREZ
+  universe      = bg_entrez,     # ENTREZ
+  organism      = "human",
+  pAdjustMethod = "BH",
+  qvalueCutoff  = 0.05,
+  minGSSize     = 10,
+  maxGSSize     = 500,
+  readable      = TRUE
+)
+
+dotplot(er_Reactome, title = "Reactome Pathways")
+
+```
+
+```{r}
+gene_map <- bitr(genes_interest, fromType = "SYMBOL", toType = "ENTREZID", OrgDb = org.Hs.eg.db)
+bg_map   <- bitr(background_genes, fromType = "SYMBOL", toType = "ENTREZID", OrgDb = org.Hs.eg.db)
+genes_entrez <- unique(gene_map$ENTREZID)
+bg_entrez    <- unique(bg_map$ENTREZID)
+
+# Ensure ENTREZ IDs are character
+genes_entrez <- as.character(unique(genes_entrez))
+bg_entrez    <- as.character(unique(bg_entrez))
+
+# ---------- Collect MEDICUS components ----------
+# DISEASE (H numbers)
+# get all disease terms
+d_all <- keggList("disease") 
+link_disease <- keggLink("disease", "hsa")        
+
+# Build a TERM2GENE table for enrichment.
+t2g_disease <- tibble(
+  term   = sub("^ds:",  "", unname(link_disease)),
+  gene   = sub("^hsa:", "", names(link_disease)),
+  source = "DISEASE"
+)
+# Build a TERM2NAME table: mapping disease IDs to their descriptive names.
+t2n_disease <- tibble(
+  term   = names(d_all),
+  name   = unname(d_all),
+  source = "DISEASE"
+)
+#########################################################################################
+# DRUG (D numbers) — use drug targets as gene sets
+drug_all <- keggList("drug")                       
+link_drug <- keggLink("drug", "hsa")               
+
+# Build a TERM2GENE table for enrichment.
+t2g_drug <- tibble(
+  term   = sub("^dr:",  "", unname(link_drug)),
+  gene   = sub("^hsa:", "", names(link_drug)),
+  source = "DRUG"
+)
+
+# Build a TERM2NAME table: mapping drug IDs to their descriptive names.
+t2n_drug <- tibble(
+  term   = names(drug_all),
+  name   = unname(drug_all),
+  source = "DRUG"
+)
+###########################################################################################
+# NETWORK (N numbers) — network variation maps, if gene links exist
+network_all <- keggList("network")  
+link_network <- keggLink("network", "hsa") 
+
+
+# Build a TERM2GENE table for enrichment.
+t2g_network <- tibble(
+  term   = sub("^ne:",  "", unname(link_network)),
+  gene   = sub("^hsa:", "", names(link_network)),
+  source = "NETWORK"
+)
+
+# Build a TERM2NAME table: mapping network IDs to their descriptive names.
+t2n_network <- tibble(
+  term   = names(network_all),
+  name   = unname(network_all),
+  source = "NETWORK"
+)
+
+#################################################################################################
+# ---------- Combine to form MEDICUS gene sets ----------
+term2gene <- bind_rows(t2g_disease, t2g_drug, t2g_network) %>%
+  distinct(term, gene, source)
+
+term2name <- bind_rows(t2n_disease, t2n_drug, t2n_network) %>%
+  semi_join(distinct(term2gene, term), by = "term") %>%
+  distinct(term, name, source)
+####################################################################################################
+# ---------- Diagnostics ----------
+# how many genes do we have that overlap with the genes in th medicus?
+ov_list <- length(intersect(genes_entrez, term2gene$gene))
+ov_bg   <- length(intersect(bg_entrez,    term2gene$gene))
+cat("MEDICUS overlap list: Genes of interest", ov_list, " | Background:", ov_bg)
+
+# ---------- Enrichment ----------
+ed_med <- enricher(
+  gene          = genes_entrez,
+  universe      = bg_entrez,
+  TERM2GENE = dplyr::select(term2gene, term, gene),
+  TERM2NAME = dplyr::select(term2name, term, name),
+  pAdjustMethod = "BH",
+  pvalueCutoff = 0.05,
+  qvalueCutoff = 0.20,
+  minGSSize    = 10,
+  maxGSSize    = 500
+
+)
+
+p <- dotplot(ed_med, title = "KEGG MEDICUS (Disease/Drug/Network)")
+p
+#save plot
+#ggsave("medicus_enrichment.png", plot = p, width = 8, height = 6, dpi = 300)
+```
+```{r}
+packageVersion("clusterProfiler")
+packageVersion("KEGGREST")
+packageVersion("org.Hs.eg.db")
+packageVersion("enrichplot")
+packageVersion("ReactomePA")
+packageVersion("msigdbr")
+packageVersion("org.Hs.eg.db")
+```
