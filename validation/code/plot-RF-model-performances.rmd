@@ -1,0 +1,50 @@
+```{r}
+if (! "readxl" %in% installed.packages()) {
+  install.packages("readxl")
+}
+
+if (! "tidyverse" %in% installed.packages()) {
+  install.packages("tidyverse")
+}
+
+library(readxl)
+library(tidyverse)
+
+raw <- read_excel("RF-model-performances.xlsx", col_names = FALSE)
+df <- raw %>% select(1:3) %>% drop_na() %>% set_names(c("RF_lab","Mean_ROC_AUC","Mean_PR_AUC"))
+
+df <- df %>%
+  mutate(
+    RF_num = as.numeric(gsub("^RF", "", as.character(RF_lab))),
+    RF_lab = ifelse(RF_num == 1, "RF1", paste0("RF", RF_num))
+  ) %>%
+  pivot_longer(cols = c(Mean_PR_AUC, Mean_ROC_AUC),
+               names_to = "Metric", values_to = "Value") %>%
+  mutate(Value = readr::parse_number(as.character(Value)))
+
+df <- df %>% arrange(RF_num)
+x_breaks <- unique(df$RF_num)
+x_labels <- df %>% distinct(RF_num, RF_lab) %>% arrange(RF_num) %>% pull(RF_lab)
+
+p <- ggplot(df, aes(x = RF_num, y = Value, group = Metric)) +
+  geom_line(aes(linetype = Metric), size = 0.9, color = "black") +
+  geom_point(aes(shape = Metric), size = 2.4, color = "black") +
+  geom_text(
+    aes(label = sprintf("%.2f", Value)),
+    vjust = -0.8, size = 3, color = "black", show.legend = FALSE
+  ) +
+  scale_shape_manual(NULL, values = c("Mean_PR_AUC" = 16, "Mean_ROC_AUC" = 17),
+                     labels = c("Mean PR AUC", "Mean ROC AUC")) +
+  scale_linetype_manual(NULL, values = c("Mean_PR_AUC" = "solid", "Mean_ROC_AUC" = "dashed"),
+                        labels = c("Mean PR AUC", "Mean ROC AUC")) +
+  scale_x_continuous(breaks = x_breaks, labels = x_labels) +
+  scale_y_continuous(limits = c(0, 1), breaks = seq(0, 1, 0.2),
+                     expand = expansion(mult = c(0.02, 0.06))) +
+  labs(x = NULL, y = "AUC") +
+  theme_classic(base_size = 13) +
+  theme(legend.position = "top",
+        panel.grid.major.y = element_line(color = "grey85", linewidth = 0.3),
+        panel.grid.minor = element_blank())
+
+ggsave("RF_two_lines_bw_labeled.svg", p, width = 4.6, height = 3.0, units = "in")
+```

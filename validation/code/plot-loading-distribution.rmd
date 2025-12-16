@@ -1,0 +1,129 @@
+# load packages
+```{r}
+if (! "tidyverse" %in% installed.packages()) {
+  install.packages("tidyverse")
+}
+
+if (! "ggplot2" %in% installed.packages()) {
+  install.packages("ggplot2")
+}
+
+load("tidyverse")
+laod("ggplot2")
+```
+
+
+# plot loading distribution of RNA modality
+```{r}
+w_RNA <- read.csv(file = "loading-distribution-of-RNA-modality.csv", header = TRUE, row.names = 1)
+
+df_long <- as.data.frame(w_RNA) %>%
+  rownames_to_column("gene") %>%
+  pivot_longer(-gene, names_to = "Factor", values_to = "Loading") %>%
+  mutate(Factor = factor(Factor, levels = colnames(L)))
+
+p <- ggplot(df_long, aes(x = Factor, y = Loading)) +
+  geom_boxplot(
+    fill = "grey40", color = "black", width = 0.6,
+    outlier.shape = 16, outlier.size = 1.8, outlier.alpha = 0.9
+  ) +
+  stat_summary(fun = median, geom = "crossbar", width = 0.6,
+               fatten = 0, color = "white") +
+  coord_cartesian(ylim = c(-1, 1)) +
+  labs(x = NULL, y = "Estimated correlation") +
+  theme_classic(base_size = 14) +
+  theme(
+    panel.grid.major.y = element_line(color = "grey80"),
+    panel.grid.minor = element_blank()
+  )
+
+print(p)
+ggsave("RNA_loadings_boxplot.svg", p, width = 4, height = 5, units = "in")
+```
+
+
+# plot loading distribution of Mutation modality
+```{r}
+w_mut <- read.csv(file = "loading-distribution-of-Mutation-modality.csv", header = TRUE, row.names = 1)
+
+df_long <- as.data.frame(w_mut) %>%
+  rownames_to_column("gene") %>%
+  pivot_longer(-gene, names_to = "Factor", values_to = "Loading") %>%
+  mutate(Factor = factor(Factor, levels = colnames(L)))
+
+p <- ggplot(df_long, aes(x = Factor, y = Loading)) +
+  geom_boxplot(
+    fill = "grey40", color = "black", width = 0.6,
+    outlier.shape = 16, outlier.size = 1.8, outlier.alpha = 0.9
+  ) +
+  stat_summary(fun = median, geom = "crossbar", width = 0.6,
+               fatten = 0, color = "white") +
+  coord_cartesian(ylim = c(-1, 1)) +
+  labs(x = NULL, y = "Estimated correlation") +
+  theme_classic(base_size = 14) +
+  theme(
+    panel.grid.major.y = element_line(color = "grey80"),
+    panel.grid.minor = element_blank()
+  )
+
+print(p)
+ggsave("Mutation_loadings_boxplot.svg", p, width = 4, height = 5, units = "in")
+```
+
+
+# plot loading distribution of CNA modality
+```{r}
+w_CNA <- read.csv(file = "loading-distribution-of-CNA-modality.csv", header = TRUE, row.names = 1)
+
+df_long <- as.data.frame(w_CNA) %>%
+  rownames_to_column("gene") %>%
+  pivot_longer(-gene, names_to = "Factor", values_to = "Loading") %>%
+  mutate(Factor = factor(Factor, levels = colnames(L)))
+
+p <- ggplot(df_long, aes(x = Factor, y = Loading)) +
+  geom_boxplot(
+    fill = "grey40", color = "black", width = 0.6,
+    outlier.shape = 16, outlier.size = 1.8, outlier.alpha = 0.9
+  ) +
+  stat_summary(fun = median, geom = "crossbar", width = 0.6,
+               fatten = 0, color = "white") +
+  coord_cartesian(ylim = c(-1, 1)) +
+  labs(x = NULL, y = "Estimated correlation") +
+  theme_classic(base_size = 14) +
+  theme(
+    panel.grid.major.y = element_line(color = "grey80"),
+    panel.grid.minor = element_blank()
+  )
+
+print(p)
+ggsave("CNA_loadings_boxplot.svg", p, width = 4, height = 5, units = "in")
+```
+
+
+# plot loading distribution of DNA-methylation modality
+```{r}
+w_meth <- read.csv(file = "loading-distribution-of-DNA-methylation-modality.csv", header = TRUE, row.names = 1)
+
+df_long <- as.data.frame(w_meth) %>%
+  rownames_to_column("gene") %>%
+  pivot_longer(-gene, names_to = "Factor", values_to = "Loading") %>%
+  mutate(Factor = factor(Factor, levels = colnames(L)))
+
+p <- ggplot(df_long, aes(x = Factor, y = Loading)) +
+  geom_boxplot(
+    fill = "grey40", color = "black", width = 0.6,
+    outlier.shape = 16, outlier.size = 1.8, outlier.alpha = 0.9
+  ) +
+  stat_summary(fun = median, geom = "crossbar", width = 0.6,
+               fatten = 0, color = "white") +
+  coord_cartesian(ylim = c(-1, 1)) +
+  labs(x = NULL, y = "Estimated correlation") +
+  theme_classic(base_size = 14) +
+  theme(
+    panel.grid.major.y = element_line(color = "grey80"),
+    panel.grid.minor = element_blank()
+  )
+
+print(p)
+ggsave("DNA-methylation_loadings_boxplot.svg", p, width = 4, height = 5, units = "in")
+```
