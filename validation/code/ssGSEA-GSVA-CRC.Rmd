@@ -1,0 +1,242 @@
+# install package
+```{r}
+if (!require("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+
+BiocManager::install("GSVA")
+```
+
+
+```{r}
+patient_id <- c("P029155", "P029148", "P029143", "P029138", "P029137", "P029180", "P029177", "P029174", "P029173",
+                "P029172", "P029163", "P029162", "P029192", "P029188", "P029185", "P029178", "P029017", "P029018",
+                "P029019", "P029189", "P029130", "P029166")
+patient_id
+```
+
+
+# read in external dataset(Andy's dataset). complete transcriptome
+```{r}
+load(file = "RNASeq.RData")
+ARC_counts_CRC <- ARC_counts[, patient_id]
+```
+
+
+```{r}
+library(GSVA)
+
+expr <- as.matrix(ARC_counts_CRC)
+storage.mode(expr) <- "numeric"
+
+# read in gene set
+gs_list <- readGMT("GOBP_RESPONSE_TO_IONIZING_RADIATION.v2025.1.Hs.gmt", valueType="list")
+geneSets <- list(GOBP_RESPONSE_TO_IONIZING_RADIATION = unname(gs_list[[1]]))
+
+rownames(expr) <- toupper(rownames(expr))
+geneSets <- lapply(geneSets, toupper)
+geneSets <- lapply(geneSets, function(gs) intersect(gs, rownames(expr)))
+
+length(geneSets[[1]])
+
+# run ssGSEA
+sp <- ssgseaParam(
+  exprData  = expr,
+  geneSets  = geneSets,
+  minSize   = 10,
+  maxSize   = 500,
+  alpha     = 0.25,
+  normalize = TRUE
+)
+
+es_mat <- gsva(sp, verbose = TRUE)
+ES <- as.numeric(es_mat[1, ])
+names(ES) <- colnames(es_mat)
+
+ES
+```
+
+
+```{r}
+response <- c("Complete", "Complete", "Complete", "Complete", "Incomplete", "Incomplete", "Complete",
+              "Incomplete", "Complete", "Complete", "Complete", "Complete", "Incomplete", "Complete",
+              "Incomplete", "Incomplete", "Complete", "Complete", "Incomplete", "Complete", "Incomplete",
+              "Complete")
+
+pred <- data.frame(
+  sample = patient_id,
+  Response = response,
+  stringsAsFactors = FALSE
+)
+```
+
+
+# check
+```{r}
+# ES: named numeric vector (names are sample IDs)
+stopifnot(exists("ES"))
+
+stopifnot(all(c("sample","Response") %in% colnames(pred)))
+
+# length(intersect(names(ES), pred$sample))
+
+# setdiff(names(ES), pred$sample)
+# setdiff(pred$sample, names(ES))
+```
+
+
+```{r}
+df_plot <- data.frame(
+  sample = names(ES),
+  ES = as.numeric(ES),
+  Response = pred$Response[match(names(ES), pred$sample)],
+  stringsAsFactors = FALSE
+)
+
+df_plot$Response <- trimws(df_plot$Response)
+df_plot$Response <- ifelse(df_plot$Response %in% c("Complete","Incomplete"),
+                          df_plot$Response, NA_character_)
+
+df_plot <- df_plot[!is.na(df_plot$Response), , drop = FALSE]
+df_plot$Response <- factor(df_plot$Response, levels = c("Incomplete","Complete"))
+
+print(table(df_plot$Response, useNA = "ifany"))
+stopifnot(nlevels(df_plot$Response) == 2)
+stopifnot(all(table(df_plot$Response) > 0))
+```
+
+
+```{r}
+library(ggplot2)
+df_plot$Response <- factor(df_plot$Response, levels = c("Incomplete", "Complete"))
+
+# Wilcoxon hypothesi testing
+test <- wilcox.test(ES ~ Response, data = df_plot)
+pval <- signif(test$p.value, 3)
+
+p <- ggplot(df_plot, aes(x = Response, y = ES)) +
+  geom_boxplot(outlier.shape = NA) +
+  geom_jitter(width = 0.15, height = 0) +
+  theme_classic() +
+  labs(
+    x = "Response",
+    y = "ssGSEA ES",
+    title = "ssGSEA: Response to ionizing radiation"
+  ) +
+  annotate(
+    "text",
+    x = 1.5,
+    y = max(df_plot$ES, na.rm = TRUE) * 1.05,
+    label = paste0("Wilcoxon p = ", pval)
+  ) +
+  coord_cartesian(ylim = c(min(df_plot$ES, na.rm = TRUE),
+                           max(df_plot$ES, na.rm = TRUE) * 1.1))
+
+print(p)
+ggsave("ssGSEA_boxplot_ionizing_radiation.png", p, width = 6, height = 4, dpi = 300)
+```
+
+
+# read in validation dataset. complete transcriptome
+```{r}
+rna_supervised <- readRDS("RNA_supervised_preprocessed")
+patient_data <- read.delim("ws3_grampian_patient_data.txt")
+#subset metadata to only include important columns
+patient_data <- patient_data[,c(1,20)]
+#extract patient response types fro samples in rna subset
+response <- patient_data[patient_data$X.Patient.ID %in% colnames(rna_supervised),2]
+# add response types to rna subset
+rna_supervised <- rbind(rna_supervised, Response = response)
+```
+
+
+```{r}
+dim(rna_supervised)
+```
+
+```{r}
+rna_supervised <- t(rna_supervised)
+```
+
+
+```{r}
+df <- as.data.frame(rna_supervised)
+stopifnot("Response" %in% colnames(df))
+
+df$Response <- as.character(df$Response)
+df$Response <- ifelse(df$Response == "Complete", "Complete", "Incomplete")
+df$Response <- factor(df$Response, levels = c("Incomplete", "Complete"))
+
+table(df$Response, useNA = "ifany")
+
+expr_sample_by_gene <- df[, setdiff(colnames(df), "Response"), drop = FALSE]
+expr_sample_by_gene <- as.matrix(expr_sample_by_gene)
+storage.mode(expr_sample_by_gene) <- "numeric"
+
+expr <- t(expr_sample_by_gene)
+colnames(expr) <- rownames(df)
+```
+
+
+```{r}
+library(GSVA)
+
+gmt_file <- "GOBP_RESPONSE_TO_IONIZING_RADIATION.v2025.1.Hs.gmt"
+gs_list <- readGMT(gmt_file, valueType = "list")
+
+geneSets <- list(GOBP_RESPONSE_TO_IONIZING_RADIATION = unname(gs_list[[1]]))
+
+rownames(expr) <- toupper(rownames(expr))
+geneSets <- lapply(geneSets, toupper)
+geneSets <- lapply(geneSets, function(gs) intersect(gs, rownames(expr)))
+
+length(geneSets[[1]])
+
+sp <- ssgseaParam(
+  exprData  = expr,
+  geneSets  = geneSets,
+  minSize   = 10,
+  maxSize   = 500,
+  alpha     = 0.25,
+  normalize = TRUE
+)
+
+es_mat <- gsva(sp, verbose = TRUE)
+ES <- as.numeric(es_mat[1, ])
+names(ES) <- colnames(es_mat)
+```
+
+```{r}
+library(ggplot2)
+
+df_plot <- data.frame(
+  sample = names(ES),
+  ES = as.numeric(ES),
+  Response = df$Response[match(names(ES), rownames(df))],
+  stringsAsFactors = FALSE
+)
+
+df_plot <- df_plot[!is.na(df_plot$Response), , drop = FALSE]
+df_plot$Response <- factor(df_plot$Response, levels = c("Incomplete","Complete"))
+
+# Wilcoxon hypothesis testing
+test <- wilcox.test(ES ~ Response, data = df_plot)
+pval <- signif(test$p.value, 3)
+
+# boxplot
+p <- ggplot(df_plot, aes(x = Response, y = ES)) +
+  geom_boxplot(outlier.shape = NA) +
+  geom_jitter(width = 0.15, height = 0) +
+  theme_classic() +
+  labs(x="Response", y="ssGSEA ES",
+       title="ssGSEA: Response to ionizing radiation") +
+  annotate("text", x = 1.5,
+           y = max(df_plot$ES, na.rm = TRUE) * 1.05,
+           label = paste0("Wilcoxon p = ", pval)) +
+  coord_cartesian(ylim = c(min(df_plot$ES, na.rm = TRUE),
+                           max(df_plot$ES, na.rm = TRUE) * 1.1))
+
+print(p)
+test
+ggsave("validation-ssGSEA_boxplot_ionizing_radiation_validation.png", p, width = 6, height = 4, dpi = 300)
+```
+

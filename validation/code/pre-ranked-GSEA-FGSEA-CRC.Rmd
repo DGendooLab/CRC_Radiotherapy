@@ -1,0 +1,103 @@
+# install packages
+```{r}
+if (!require("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+
+if (!"fgsea" %in% installed.packages()) {
+  BiocManager::install("fgsea")
+}
+
+library(fgsea)
+
+if (!"data.table" %in% installed.packages()) {
+  install.packages("data.table")
+}
+
+library("data.table")
+
+if (!"ggplot2" %in% installed.packages()) {
+  install.packages("ggplot2")
+}
+
+library("ggplot2")
+```
+
+
+# load GMT files
+```{r}
+C2_KEGG_LEGACY_gmt_file <- "c2.cp.kegg_legacy.v2025.1.Hs.symbols.gmt"
+C2_REACTOME_gmt_file <- "c2.cp.reactome.v2025.1.Hs.symbols.gmt"
+C5_GO_BP_gmt_file <- "c5.go.bp.v2025.1.Hs.symbols.gmt"
+
+C2_KEGG_LEGACY_pathways <- fgsea::gmtPathways(gmt.file = C2_KEGG_LEGACY_gmt_file)
+C2_REACTOME_pathways <- fgsea::gmtPathways(gmt.file = C2_REACTOME_gmt_file)
+C5_GO_BP_pathways <- fgsea::gmtPathways(gmt.file = C5_GO_BP_gmt_file)
+```
+
+
+```{r}
+C2_gmt_file <- "c2.all.v2025.1.Hs.symbols.gmt"
+C5_gmt_file <- "c5.all.v2025.1.Hs.symbols.gmt"
+
+C2_pathways <- fgsea::gmtPathways(gmt.file = C2_gmt_file)
+C5_pathways <- fgsea::gmtPathways(gmt.file = C5_gmt_file)
+```
+
+
+```{r}
+CRC_ranks <- read.csv(file = "CRC_preranked_F2_F4_thr0.8.csv", sep = ",", header = FALSE)
+
+CRC_ranks <- setNames(CRC_ranks$V2, CRC_ranks$V1)
+str(CRC_ranks)
+```
+
+
+# run fgsea::fgsea() function on different GMT files
+```{r}
+C2_KEGG_LEGACY_fgseaRes <- fgsea::fgsea(pathways = C2_KEGG_LEGACY_pathways,
+                                        stats = CRC_ranks,
+                                        minSize = 15, maxSize = 1000)
+```
+
+
+```{r}
+C2_REACTOME_fgseaRes <- fgsea::fgsea(pathways = C2_REACTOME_pathways,
+                                        stats = CRC_ranks,
+                                        minSize = 15, maxSize = 1000)
+```
+
+
+```{r}
+C5_GO_BP_fgseaRes <- fgsea::fgsea(pathways = C5_GO_BP_pathways,
+                                        stats = CRC_ranks,
+                                        minSize = 15, maxSize = 500)
+```
+
+
+```{r}
+C2_all_fgseaRes <- fgsea::fgsea(pathways = C2_pathways,
+                                        stats = CRC_ranks,
+                                        minSize = 15, maxSize = 500)
+```
+
+```{r}
+C5_all_fgseaRes <- fgsea::fgsea(pathways = C5_pathways,
+                                        stats = CRC_ranks,
+                                        minSize = 15, maxSize = 500)
+```
+
+# save results to file
+```{r}
+library(data.table)
+
+c2_dt <- as.data.table(C2_all_fgseaRes)
+c5_dt <- as.data.table(C5_all_fgseaRes)
+
+# sort by adjusted p-value
+setorder(c2_dt, padj)
+setorder(c5_dt, padj)
+
+fwrite(c2_dt, file = "C2_all_fgseaRes.csv")
+fwrite(c5_dt, file = "C5_all_fgseaRes.csv")
+```
+
